@@ -7,6 +7,8 @@ To run this strip_tz_info.py do:
 
 ```bash python3 strip_tz_info.py path/to/input_csv path/to/output_csv```
 
+input and output csv's must be different or this script will delete most rows, not sure why but just make sure you are writing to a different csv then you are reading from
+
 # Hilbert Tensor Preprocessing Pipeline
 
 This pipeline converts a large Texas air-quality CSV into PyTorch tensors suitable for spatiotemporal modeling with RNNs, ConvLSTMs, and related architectures.
