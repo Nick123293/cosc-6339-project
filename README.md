@@ -1,4 +1,12 @@
 # cosc-6339-project
+
+# NOTE
+Before you use run_pipeline.sh, it is recommended to use strip_tz_info.py, which gets rid of the timezone information from the CSV (this is redundant information as they are all (-6:00).
+
+To run this strip_tz_info.py do:
+
+```bash python3 strip_tz_info.py input_csv output_csv```
+
 # Hilbert Tensor Preprocessing Pipeline
 
 This pipeline converts a large Texas air-quality CSV into PyTorch tensors suitable for spatiotemporal modeling with RNNs, ConvLSTMs, and related architectures.
