@@ -5,7 +5,7 @@ Before you use run_pipeline.sh, it is recommended to use strip_tz_info.py, which
 
 To run this strip_tz_info.py do:
 
-```bash python3 strip_tz_info.py input_csv output_csv```
+```bash python3 strip_tz_info.py path/to/input_csv path/to/output_csv```
 
 # Hilbert Tensor Preprocessing Pipeline
 
