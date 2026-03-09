@@ -355,7 +355,7 @@ If the script saves a dictionary, it will usually contain the tensor plus metada
 
 - The pipeline assumes the selected feature columns are numeric.
 - The split is based on **unique sorted timestamps**, not row counts.
-- Missing `(time, location)` combinations are typically filled with `NaN` in the final tensors unless the script was configured otherwise.
+- Missing `(time, location)` combinations are typically averages for each feature, if average cannot be found defaults to 0.
 - If duplicate rows exist for the same `(time, latitude, longitude)`, later rows may overwrite earlier rows unless you modify the tensor-building logic.
 - The Hilbert layout is **dense**, meaning it packs valid locations tightly into the spatial grid rather than preserving exact geographic spacing.
 
