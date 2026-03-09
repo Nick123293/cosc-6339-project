@@ -57,7 +57,7 @@ def build_tensor_for_indices(
     selected_time_values: Sequence,
     H: int,
     W: int,
-    fill_value: float,
+    fill_values: Sequence[float],
     out_dtype: np.dtype,
 ) -> Tuple[torch.Tensor, List[str]]:
     split_df = df[df["time"].isin(selected_time_values)].copy()
@@ -68,7 +68,11 @@ def build_tensor_for_indices(
 
     T = len(time_order)
     C = len(feature_columns)
-    tensor_np = np.full((T, C, H, W), fill_value, dtype=out_dtype)
+    fill_array = np.asarray(fill_values, dtype=out_dtype)
+    if fill_array.shape != (C,):
+        raise ValueError(f"Expected {C} fill values, got shape {fill_array.shape}")
+
+    tensor_np = np.broadcast_to(fill_array.reshape(1, C, 1, 1), (T, C, H, W)).copy()
 
     if T == 0:
         return torch.from_numpy(tensor_np), []
@@ -91,11 +95,11 @@ def save_split(
     selected_time_values: Sequence,
     H: int,
     W: int,
-    fill_value: float,
+    fill_values: Sequence[float],
     out_dtype: np.dtype,
     output_path: str,
 ) -> str:
-    tensor, times = build_tensor_for_indices(df, feature_columns, selected_time_values, H, W, fill_value, out_dtype)
+    tensor, times = build_tensor_for_indices(df, feature_columns, selected_time_values, H, W, fill_values, out_dtype)
     payload = {
         "tensor": tensor,
         "times": times,
@@ -125,7 +129,12 @@ def main() -> None:
     parser.add_argument("--train-pct", type=float, default=0.70, help="Training timestamp fraction")
     parser.add_argument("--val-pct", type=float, default=0.15, help="Validation timestamp fraction")
     parser.add_argument("--test-pct", type=float, default=0.15, help="Testing timestamp fraction")
-    parser.add_argument("--fill-value", type=float, default=float("nan"), help="Fill value for missing (time, location)")
+    parser.add_argument(
+        "--fill-value",
+        type=float,
+        default=float("0.0"),
+        help="Fallback fill value used only if a feature column mean cannot be computed.",
+    )
     parser.add_argument("--dtype", choices=["float32", "float64"], default="float32", help="Tensor floating-point dtype")
     parser.add_argument("--workers", type=int, default=3, help="Number of threads used to build/save the three split tensors")
     args = parser.parse_args()
@@ -163,6 +172,11 @@ def main() -> None:
     H = int(df["y"].max()) + 1
     W = int(df["x"].max()) + 1
 
+    feature_fill_values = df[list(features)].mean(axis=0, skipna=True).to_numpy(dtype=out_dtype, copy=True)
+    invalid_fill_mask = ~np.isfinite(feature_fill_values)
+    if np.any(invalid_fill_mask):
+        feature_fill_values[invalid_fill_mask] = out_dtype.type(args.fill_value)
+
     jobs = [
         ("train", train_times, args.train_out),
         ("val", val_times, args.val_out),
@@ -171,7 +185,7 @@ def main() -> None:
 
     with ThreadPoolExecutor(max_workers=max(1, args.workers)) as ex:
         futures = [
-            ex.submit(save_split, name, df, features, times, H, W, args.fill_value, out_dtype, out_path)
+            ex.submit(save_split, name, df, features, times, H, W, feature_fill_values, out_dtype, out_path)
             for name, times, out_path in jobs
         ]
         results = [f.result() for f in futures]
@@ -182,6 +196,9 @@ def main() -> None:
     print(f"Tensor shape convention: [T, C, H, W]")
     print(f"Features ({len(features)}): {features}")
     print(f"Spatial shape: H={H}, W={W}")
+    print("Per-feature fill values (channel means):")
+    for feature_name, fill in zip(features, feature_fill_values.tolist()):
+        print(f"  {feature_name}: {fill}")
     print(f"Timestamp counts -> train: {len(train_times)}, val: {len(val_times)}, test: {len(test_times)}")
 
 
