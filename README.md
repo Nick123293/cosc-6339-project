@@ -2,7 +2,7 @@
 
 # NOTE:
 Before using run_pipeline.sh you need to run strip_tz_info.py to make the time column an acceptable format. This is done through:  
-`python3 strip_tz_info /path/to/input /path/to/output`
+`python3 strip_tz_info.py /path/to/input /path/to/output`
 
 This repository contains a Python preprocessing pipeline for converting merged air-quality, weather, ZIP-level spatial context, and TRI emissions data into tensors suitable for PyTorch RNN training.
 
