@@ -529,9 +529,3 @@ Either rely on auto-detection, or explicitly pass:
 ```bash
 --direction-columns wind_direction_10m,wind_direction_100m
 ```
-
----
-
-## License / usage
-
-Adapt this section however you want for your repository.
