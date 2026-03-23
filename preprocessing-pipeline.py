@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import torch
 from sklearn.decomposition import PCA
 
 
@@ -1142,6 +1143,26 @@ def write_master_log(
 
 
 # =============================================================================
+# New Step 11: Save as PyTorch .pt
+# =============================================================================
+
+def step11_save_as_pt(input_npy: str, output_pt: str, logger: PipelineLogger) -> dict:
+    logger.section("New Step 11 - Save as PyTorch .pt file")
+    
+    # Load the numpy data
+    tensor_np = np.load(input_npy)
+    
+    # Convert it to a PyTorch tensor
+    tensor_pt = torch.from_numpy(tensor_np).float()
+    
+    # Save it as a .pt file
+    torch.save(tensor_pt, output_pt)
+    
+    logger.kv("saved_pt_file", output_pt)
+    return {"output_pt": output_pt}
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -1190,14 +1211,10 @@ def main():
         action="store_true",
         help="Keep original direction columns after creating sin/cos columns."
     )
-    ap.add_argument(
-        "--rnn-batch-first",
-        action="store_true",
-        help="Save RNN-ready tensors in batch-first format [batch, time, input_size]."
-    )
 
     args = ap.parse_args()
-    batch_first = True if args.rnn_batch_first else False
+    
+    # Check the math for fractions!
     total_fraction = args.train_fraction + args.val_fraction + args.test_fraction
     if not np.isclose(total_fraction, 1.0, atol=1e-8):
         raise ValueError(f"train/val/test fractions must sum to 1.0, got {total_fraction}")
@@ -1209,14 +1226,15 @@ def main():
     ensure_dir(os.path.join(args.output_dir, "metadata"))
     ensure_dir(os.path.join(args.output_dir, "logs"))
 
+    # File tracking lists
     intermediate = {
         "step1_merged_csv": os.path.join(args.output_dir, "intermediate", "01_merged.csv"),
         "step2_spatial_csv": os.path.join(args.output_dir, "intermediate", "02_with_spatial_impact.csv"),
+        "step_time_features_csv": os.path.join(args.output_dir, "intermediate", "new_time_features.csv"),
         "step3_direction_expanded_csv": os.path.join(args.output_dir, "intermediate", "03_direction_expanded.csv"),
         "step4_normalized_csv": os.path.join(args.output_dir, "intermediate", "04_normalized.csv"),
         "step5_variance_filtered_csv": os.path.join(args.output_dir, "intermediate", "05_variance_filtered.csv"),
-        "step6_pca_csv": os.path.join(args.output_dir, "intermediate", "06_pca.csv"),
-        "step7_hilbert_csv": os.path.join(args.output_dir, "intermediate", "07_hilbert_encoded.csv"),
+        "step_latlon_csv": os.path.join(args.output_dir, "intermediate", "new_latlon_added.csv"),
         "step8_full_tensor_npy": os.path.join(args.output_dir, "intermediate", "08_full_tensor.npy"),
         "step9_train_tensor_npy": os.path.join(args.output_dir, "intermediate", "09_train_tensor.npy"),
         "step9_val_tensor_npy": os.path.join(args.output_dir, "intermediate", "09_val_tensor.npy"),
@@ -1224,26 +1242,22 @@ def main():
         "train_filled_tensor_npy": os.path.join(args.output_dir, "train_tensor_filled.npy"),
         "val_filled_tensor_npy": os.path.join(args.output_dir, "val_tensor_filled.npy"),
         "test_filled_tensor_npy": os.path.join(args.output_dir, "test_tensor_filled.npy"),
-        "train_rnn_ready_npy": os.path.join(args.output_dir, "train_rnn_ready.npy"),
-        "val_rnn_ready_npy": os.path.join(args.output_dir, "val_rnn_ready.npy"),
-        "test_rnn_ready_npy": os.path.join(args.output_dir, "test_rnn_ready.npy"),
+        "train_pt": os.path.join(args.output_dir, "train_tensor.pt"),
+        "val_pt": os.path.join(args.output_dir, "val_tensor.pt"),
+        "test_pt": os.path.join(args.output_dir, "test_tensor.pt"),
     }
 
     meta_paths = {
-        "direction_expand_json": os.path.join(args.output_dir, "metadata", "03_direction_expand.json"),
         "spatial_impact_json": os.path.join(args.output_dir, "metadata", "02_spatial_impact.json"),
+        "direction_expand_json": os.path.join(args.output_dir, "metadata", "03_direction_expand.json"),
         "normalization_stats_json": os.path.join(args.output_dir, "metadata", "04_normalization_stats.json"),
         "variance_report_json": os.path.join(args.output_dir, "metadata", "05_variance_report.json"),
-        "pca_report_json": os.path.join(args.output_dir, "metadata", "06_pca_report.json"),
-        "hilbert_mapping_json": os.path.join(args.output_dir, "metadata", "07_hilbert_mapping.json"),
+        "latlon_mapping_json": os.path.join(args.output_dir, "metadata", "new_latlon_mapping.json"),
         "tensor_meta_json": os.path.join(args.output_dir, "metadata", "08_tensor_metadata.json"),
         "split_meta_json": os.path.join(args.output_dir, "metadata", "09_split_metadata.json"),
         "train_fill_report_json": os.path.join(args.output_dir, "metadata", "10_train_lorenzo_fill_report.json"),
         "val_fill_report_json": os.path.join(args.output_dir, "metadata", "10_val_lorenzo_fill_report.json"),
         "test_fill_report_json": os.path.join(args.output_dir, "metadata", "10_test_lorenzo_fill_report.json"),
-        "train_rnn_ready_json": os.path.join(args.output_dir, "metadata", "11_train_rnn_ready.json"),
-        "val_rnn_ready_json": os.path.join(args.output_dir, "metadata", "11_val_rnn_ready.json"),
-        "test_rnn_ready_json": os.path.join(args.output_dir, "metadata", "11_test_rnn_ready.json"),
     }
 
     step_log_path = os.path.join(args.output_dir, "logs", "pipeline_steps.log")
@@ -1257,204 +1271,63 @@ def main():
             "tri_chemicals": args.tri_chemicals,
             "zip_shapefile": args.zip_shapefile,
             "roads_shapefile": args.roads_shapefile,
-            "place_shapefile": args.place_shapefile,
         },
         "parameters": {
             "time_col": args.time_col,
             "zip_col": args.zip_col,
             "exclude_normalization": parse_csv_list(args.exclude_normalization),
-            "exclude_variance": parse_csv_list(args.exclude_variance),
-            "exclude_pca": parse_csv_list(args.exclude_pca),
-            "variance_threshold": args.variance_threshold,
-            "pca_retained_variance": args.pca_retained_variance,
-            "hilbert_order": args.hilbert_order,
-            "road_radius_km": args.road_radius_km,
-            "facility_radius_km": args.facility_radius_km,
             "train_fraction": args.train_fraction,
             "val_fraction": args.val_fraction,
             "test_fraction": args.test_fraction,
-            "direction_columns": parse_csv_list(args.direction_columns),
-            "auto_detect_direction_columns": not args.no_auto_detect_direction_columns,
-            "keep_original_direction_columns": args.keep_original_direction_columns,
         }
     }
 
-    s1 = step1_merge(
-        air_quality_csv=args.air_quality,
-        weather_csv=args.weather,
-        output_csv=intermediate["step1_merged_csv"],
-        time_col=args.time_col,
-        zip_col=args.zip_col,
-        logger=logger
-    )
-
-    s2 = step2_spatial_impact(
-        merged_csv=intermediate["step1_merged_csv"],
-        tri_facilities_csv=args.tri_facilities,
-        tri_chemicals_csv=args.tri_chemicals,
-        zip_shapefile=args.zip_shapefile,
-        roads_shapefile=args.roads_shapefile,
-        output_csv=intermediate["step2_spatial_csv"],
-        metadata_json=meta_paths["spatial_impact_json"],
-        zip_col=args.zip_col,
-        logger=logger,
-        road_radius_km=args.road_radius_km,
-        facility_radius_km=args.facility_radius_km,
-    )
-
-    s3 = step3_expand_direction_columns(
-        input_csv=intermediate["step2_spatial_csv"],
-        output_csv=intermediate["step3_direction_expanded_csv"],
-        metadata_json=meta_paths["direction_expand_json"],
-        logger=logger,
-        direction_columns=parse_csv_list(args.direction_columns),
-        auto_detect=not args.no_auto_detect_direction_columns,
-        drop_original=not args.keep_original_direction_columns,
-    )
-
-    s4 = step4_normalize(
-        input_csv=intermediate["step3_direction_expanded_csv"],
-        output_csv=intermediate["step4_normalized_csv"],
-        stats_json=meta_paths["normalization_stats_json"],
-        exclude_cols=parse_csv_list(args.exclude_normalization),
-        logger=logger
-    )
-
-    s5 = step5_variance_filter(
-        input_csv=intermediate["step4_normalized_csv"],
-        output_csv=intermediate["step5_variance_filtered_csv"],
-        report_json=meta_paths["variance_report_json"],
-        exclude_cols=parse_csv_list(args.exclude_variance),
-        variance_threshold=args.variance_threshold,
-        logger=logger
-    )
-
-    s6 = step6_pca(
-        input_csv=intermediate["step5_variance_filtered_csv"],
-        output_csv=intermediate["step6_pca_csv"],
-        report_json=meta_paths["pca_report_json"],
-        exclude_cols=parse_csv_list(args.exclude_pca),
-        retained_variance=args.pca_retained_variance,
-        logger=logger
-    )
-
-    s7 = step7_hilbert_encode(
-        input_csv=intermediate["step6_pca_csv"],
-        zip_shapefile=args.zip_shapefile,
-        output_csv=intermediate["step7_hilbert_csv"],
-        mapping_json=meta_paths["hilbert_mapping_json"],
-        zip_col=args.zip_col,
-        hilbert_order=args.hilbert_order,
-        logger=logger
-    )
-
-    s8 = step8_make_tensor(
-        input_csv=intermediate["step7_hilbert_csv"],
-        tensor_npy=intermediate["step8_full_tensor_npy"],
-        tensor_meta_json=meta_paths["tensor_meta_json"],
-        time_col=args.time_col,
-        hilbert_col="hilbert_position",
-        exclude_cols=[
-            args.time_col,
-            args.zip_col,
-            "hilbert_index",
-            "hilbert_position",
-            "grid_x",
-            "grid_y",
-            "centroid_x_m",
-            "centroid_y_m",
-        ],
-        logger=logger
-    )
-
-    s9 = step9_split_tensor(
-        input_tensor_npy=intermediate["step8_full_tensor_npy"],
-        tensor_meta_json=meta_paths["tensor_meta_json"],
-        train_tensor_npy=intermediate["step9_train_tensor_npy"],
-        val_tensor_npy=intermediate["step9_val_tensor_npy"],
-        test_tensor_npy=intermediate["step9_test_tensor_npy"],
-        split_meta_json=meta_paths["split_meta_json"],
-        train_fraction=args.train_fraction,
-        val_fraction=args.val_fraction,
-        test_fraction=args.test_fraction,
-        logger=logger
-    )
-
-    s10_train = step10_fill_single_tensor(
-        input_tensor_npy=intermediate["step9_train_tensor_npy"],
-        output_tensor_npy=intermediate["train_filled_tensor_npy"],
-        report_json=meta_paths["train_fill_report_json"],
-        tensor_name="train",
-        logger=logger
-    )
-
-    s10_val = step10_fill_single_tensor(
-        input_tensor_npy=intermediate["step9_val_tensor_npy"],
-        output_tensor_npy=intermediate["val_filled_tensor_npy"],
-        report_json=meta_paths["val_fill_report_json"],
-        tensor_name="validation",
-        logger=logger
-    )
-
-    s10_test = step10_fill_single_tensor(
-        input_tensor_npy=intermediate["step9_test_tensor_npy"],
-        output_tensor_npy=intermediate["test_filled_tensor_npy"],
-        report_json=meta_paths["test_fill_report_json"],
-        tensor_name="test",
-        logger=logger
-    )
-    s11_train = step11_make_rnn_ready_tensor(
-    input_tensor_npy=intermediate["train_filled_tensor_npy"],
-    output_tensor_npy=intermediate["train_rnn_ready_npy"],
-    metadata_json=meta_paths["train_rnn_ready_json"],
-    tensor_name="train",
-    batch_first=True,
-    logger=logger
-    )
-
-    s11_val = step11_make_rnn_ready_tensor(
-        input_tensor_npy=intermediate["val_filled_tensor_npy"],
-        output_tensor_npy=intermediate["val_rnn_ready_npy"],
-        metadata_json=meta_paths["val_rnn_ready_json"],
-        tensor_name="validation",
-        batch_first=True,
-        logger=logger
-    )
-
-    s11_test = step11_make_rnn_ready_tensor(
-        input_tensor_npy=intermediate["test_filled_tensor_npy"],
-        output_tensor_npy=intermediate["test_rnn_ready_npy"],
-        metadata_json=meta_paths["test_rnn_ready_json"],
-        tensor_name="test",
-        batch_first=True,
-        logger=logger
-    )
+    # Run steps!
+    s1 = step1_merge(args.air_quality, args.weather, intermediate["step1_merged_csv"], args.time_col, args.zip_col, logger)
+    
+    s2 = step2_spatial_impact(intermediate["step1_merged_csv"], args.tri_facilities, args.tri_chemicals, args.zip_shapefile, args.roads_shapefile, intermediate["step2_spatial_csv"], meta_paths["spatial_impact_json"], args.zip_col, logger, args.road_radius_km, args.facility_radius_km)
+    
+    s_time = step_add_time_features(intermediate["step2_spatial_csv"], intermediate["step_time_features_csv"], args.time_col, logger)
+    
+    s3 = step3_expand_direction_columns(intermediate["step_time_features_csv"], intermediate["step3_direction_expanded_csv"], meta_paths["direction_expand_json"], logger, parse_csv_list(args.direction_columns), not args.no_auto_detect_direction_columns, not args.keep_original_direction_columns)
+    
+    s4 = step4_normalize(intermediate["step3_direction_expanded_csv"], intermediate["step4_normalized_csv"], meta_paths["normalization_stats_json"], parse_csv_list(args.exclude_normalization), logger)
+    
+    s5 = step5_variance_filter(intermediate["step4_normalized_csv"], intermediate["step5_variance_filtered_csv"], meta_paths["variance_report_json"], parse_csv_list(args.exclude_variance), args.variance_threshold, logger)
+    
+    # Skips PCA and Hilbert. Adds Lat/Lon directly.
+    s_latlon = step_add_lat_lon(intermediate["step5_variance_filtered_csv"], args.zip_shapefile, intermediate["step_latlon_csv"], meta_paths["latlon_mapping_json"], args.zip_col, logger)
+    
+    # Create tensor using zip_col as the spatial axis
+    s8 = step8_make_tensor(intermediate["step_latlon_csv"], intermediate["step8_full_tensor_npy"], meta_paths["tensor_meta_json"], args.time_col, args.zip_col, [args.time_col, args.zip_col], logger)
+    
+    s9 = step9_split_tensor(intermediate["step8_full_tensor_npy"], meta_paths["tensor_meta_json"], intermediate["step9_train_tensor_npy"], intermediate["step9_val_tensor_npy"], intermediate["step9_test_tensor_npy"], meta_paths["split_meta_json"], args.train_fraction, args.val_fraction, args.test_fraction, logger)
+    
+    s10_train = step10_fill_single_tensor(intermediate["step9_train_tensor_npy"], intermediate["train_filled_tensor_npy"], meta_paths["train_fill_report_json"], "train", logger)
+    s10_val = step10_fill_single_tensor(intermediate["step9_val_tensor_npy"], intermediate["val_filled_tensor_npy"], meta_paths["val_fill_report_json"], "validation", logger)
+    s10_test = step10_fill_single_tensor(intermediate["step9_test_tensor_npy"], intermediate["test_filled_tensor_npy"], meta_paths["test_fill_report_json"], "test", logger)
+    
+    # Save as PyTorch .pt files
+    s11_train = step11_save_as_pt(intermediate["train_filled_tensor_npy"], intermediate["train_pt"], logger)
+    s11_val = step11_save_as_pt(intermediate["val_filled_tensor_npy"], intermediate["val_pt"], logger)
+    s11_test = step11_save_as_pt(intermediate["test_filled_tensor_npy"], intermediate["test_pt"], logger)
 
     logger.write()
 
     summary["steps"] = {
         "step1_merge": s1,
         "step2_spatial_impact": s2,
+        "step_add_time_features": s_time,
         "step3_expand_direction_columns": s3,
         "step4_normalize": s4,
         "step5_variance_filter": s5,
-        "step6_pca": {
-            "excluded_from_pca": s6["excluded_from_pca"],
-            "input_features": s6["input_features"],
-            "retained_variance_target": s6["retained_variance_target"],
-            "n_components": s6["n_components"],
-            "explained_variance_ratio": s6["explained_variance_ratio"],
-            "equations_saved_in": meta_paths["pca_report_json"],
-        },
-        "step7_hilbert_encode": s7,
+        "step_add_lat_lon": s_latlon,
         "step8_make_full_tensor": s8,
         "step9_split_tensor": s9,
-        "step10_fill_train_tensor": s10_train,
-        "step10_fill_validation_tensor": s10_val,
-        "step10_fill_test_tensor": s10_test,
-        "step11_make_train_rnn_ready": s11_train,
-        "step11_make_validation_rnn_ready": s11_val,
-        "step11_make_test_rnn_ready": s11_test,
+        "step10_fill_train": s10_train,
+        "step10_fill_val": s10_val,
+        "step10_fill_test": s10_test,
+        "step11_save_pt": {"train": s11_train, "val": s11_val, "test": s11_test}
     }
     summary["metadata_files"] = meta_paths
     summary["intermediate_files"] = intermediate
@@ -1463,11 +1336,10 @@ def main():
     write_master_log(master_log_path, summary, intermediate)
 
     print("\nPipeline complete.")
-    print(f"Train filled tensor: {intermediate['train_filled_tensor_npy']}")
-    print(f"Validation filled tensor: {intermediate['val_filled_tensor_npy']}")
-    print(f"Test filled tensor: {intermediate['test_filled_tensor_npy']}")
+    print(f"Train .pt file: {intermediate['train_pt']}")
+    print(f"Validation .pt file: {intermediate['val_pt']}")
+    print(f"Test .pt file: {intermediate['test_pt']}")
     print(f"Pipeline summary log: {master_log_path}")
-    print(f"Step log: {step_log_path}")
 
 
 if __name__ == "__main__":
