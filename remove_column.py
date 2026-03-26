@@ -5,7 +5,7 @@ import argparse
 import sys
 
 
-def remove_column(input_file, output_file, column_name):
+def remove_columns(input_file, output_file, column_names):
     with open(input_file, newline='', encoding='utf-8') as f_in:
         reader = csv.reader(f_in)
 
@@ -15,17 +15,21 @@ def remove_column(input_file, output_file, column_name):
             print("Error: CSV file is empty.", file=sys.stderr)
             sys.exit(1)
 
-        if column_name not in header:
-            print(f"Error: Column '{column_name}' not found.", file=sys.stderr)
+        missing = [col for col in column_names if col not in header]
+        if missing:
+            print(
+                f"Error: The following column(s) were not found: {', '.join(missing)}",
+                file=sys.stderr
+            )
             sys.exit(1)
 
-        remove_index = header.index(column_name)
+        remove_indices = {header.index(col) for col in column_names}
 
         with open(output_file, 'w', newline='', encoding='utf-8') as f_out:
             writer = csv.writer(f_out)
 
             # Write updated header
-            new_header = [h for i, h in enumerate(header) if i != remove_index]
+            new_header = [h for i, h in enumerate(header) if i not in remove_indices]
             writer.writerow(new_header)
 
             # Write updated rows
@@ -34,24 +38,28 @@ def remove_column(input_file, output_file, column_name):
                 if len(row) < len(header):
                     row += [""] * (len(header) - len(row))
 
-                new_row = [v for i, v in enumerate(row) if i != remove_index]
+                new_row = [v for i, v in enumerate(row) if i not in remove_indices]
                 writer.writerow(new_row)
 
-    print(f"Column '{column_name}' removed.")
+    print(f"Removed column(s): {', '.join(column_names)}")
     print(f"Output written to: {output_file}")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Remove a specific column from a CSV file by header name."
+        description="Remove one or more columns from a CSV file by header name."
     )
     parser.add_argument("input", help="Input CSV file")
     parser.add_argument("output", help="Output CSV file")
-    parser.add_argument("column", help="Column name to remove")
+    parser.add_argument(
+        "columns",
+        nargs="+",
+        help="One or more column names to remove"
+    )
 
     args = parser.parse_args()
 
-    remove_column(args.input, args.output, args.column)
+    remove_columns(args.input, args.output, args.columns)
 
 
 if __name__ == "__main__":
