@@ -410,46 +410,46 @@ def step2_spatial_impact(
 # =============================================================================
 
 
-def step3_add_time_features(
-    input_csv: str,
-    output_csv: str,
-    metadata_json: str,
-    time_col: str,
-    logger: PipelineLogger,
-) -> Dict:
-    logger.section("Step 3 - Add time-derived features")
+# def step3_add_time_features(
+#     input_csv: str,
+#     output_csv: str,
+#     metadata_json: str,
+#     time_col: str,
+#     logger: PipelineLogger,
+# ) -> Dict:
+#     logger.section("Step 3 - Add time-derived features")
 
-    df = pd.read_csv(input_csv).copy()
-    if time_col not in df.columns:
-        raise ValueError(f"Time column not found: {time_col}")
+#     df = pd.read_csv(input_csv).copy()
+#     if time_col not in df.columns:
+#         raise ValueError(f"Time column not found: {time_col}")
 
-    dt = pd.to_datetime(df[time_col], errors="coerce")
-    added = []
+#     dt = pd.to_datetime(df[time_col], errors="coerce")
+#     added = []
 
-    feature_map = {
-        "year": dt.dt.year,
-        "month": dt.dt.month,
-        "day": dt.dt.day,
-        "hour": dt.dt.hour,
-        "day_of_week": dt.dt.dayofweek,
-        "day_of_year": dt.dt.dayofyear,
-        "is_weekend": dt.dt.dayofweek.isin([5, 6]).astype("Int64"),
-    }
+#     feature_map = {
+#         "year": dt.dt.year,
+#         "month": dt.dt.month,
+#         "day": dt.dt.day,
+#         "hour": dt.dt.hour,
+#         "day_of_week": dt.dt.dayofweek,
+#         "day_of_year": dt.dt.dayofyear,
+#         "is_weekend": dt.dt.dayofweek.isin([5, 6]).astype("Int64"),
+#     }
 
-    for col, values in feature_map.items():
-        df[col] = values
-        added.append(col)
+#     for col, values in feature_map.items():
+#         df[col] = values
+#         added.append(col)
 
-    df.to_csv(output_csv, index=False)
+#     df.to_csv(output_csv, index=False)
 
-    meta = {"added_time_columns": added, "output_csv": output_csv}
-    json_dump(metadata_json, meta)
+#     meta = {"added_time_columns": added, "output_csv": output_csv}
+#     json_dump(metadata_json, meta)
 
-    logger.kv("added_time_columns", added)
-    logger.kv("output_csv", output_csv)
-    logger.kv("metadata_json", metadata_json)
+#     logger.kv("added_time_columns", added)
+#     logger.kv("output_csv", output_csv)
+#     logger.kv("metadata_json", metadata_json)
 
-    return meta
+#     return meta
 
 
 # =============================================================================
@@ -769,7 +769,7 @@ def main() -> None:
     intermediate = {
         "step1_merged_csv": os.path.join(args.output_dir, "intermediate", "01_merged.csv"),
         "step2_spatial_csv": os.path.join(args.output_dir, "intermediate", "02_with_spatial_impact.csv"),
-        "step3_time_features_csv": os.path.join(args.output_dir, "intermediate", "03_with_time_features.csv"),
+        # "step3_time_features_csv": os.path.join(args.output_dir, "intermediate", "03_with_time_features.csv"),
         "step4_direction_expanded_csv": os.path.join(args.output_dir, "intermediate", "04_direction_expanded.csv"),
         "step5_with_latlon_csv": os.path.join(args.output_dir, "intermediate", "05_with_latlon.csv"),
         "step6_variance_filtered_csv": os.path.join(args.output_dir, "intermediate", "06_variance_filtered.csv"),
@@ -779,7 +779,7 @@ def main() -> None:
 
     meta_paths = {
         "spatial_impact_json": os.path.join(args.output_dir, "metadata", "02_spatial_impact.json"),
-        "time_features_json": os.path.join(args.output_dir, "metadata", "03_time_features.json"),
+        # "time_features_json": os.path.join(args.output_dir, "metadata", "03_time_features.json"),
         "direction_expand_json": os.path.join(args.output_dir, "metadata", "04_direction_expand.json"),
         "latlon_mapping_json": os.path.join(args.output_dir, "metadata", "05_latlon_mapping.json"),
         "variance_report_json": os.path.join(args.output_dir, "metadata", "06_variance_report.json"),
@@ -831,16 +831,16 @@ def main() -> None:
         args.facility_radius_km,
     )
 
-    s3 = step3_add_time_features(
-        intermediate["step2_spatial_csv"],
-        intermediate["step3_time_features_csv"],
-        meta_paths["time_features_json"],
-        args.time_col,
-        logger,
-    )
+    # s3 = step3_add_time_features(
+    #     intermediate["step2_spatial_csv"],
+    #     intermediate["step3_time_features_csv"],
+    #     meta_paths["time_features_json"],
+    #     args.time_col,
+    #     logger,
+    # )
 
     s4 = step4_expand_direction_columns(
-        intermediate["step3_time_features_csv"],
+        intermediate["step2_spatial_csv"],
         intermediate["step4_direction_expanded_csv"],
         meta_paths["direction_expand_json"],
         logger,
@@ -897,7 +897,7 @@ def main() -> None:
     summary["steps"] = {
         "step1_merge": s1,
         "step2_spatial_impact": s2,
-        "step3_add_time_features": s3,
+        # "step3_add_time_features": s3,
         "step4_expand_direction_columns": s4,
         "step5_add_lat_lon": s5,
         "step6_variance_filter": s6,
