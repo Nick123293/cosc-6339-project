@@ -4,7 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence
 
 import geopandas as gpd
 import numpy as np
@@ -14,7 +14,105 @@ import pandas as pd
 # =============================================================================
 # Utility helpers
 # =============================================================================
-
+zip_code_to_lat_long_map = {
+        77002 : (29.75635, -95.36538),
+        77003 : (29.74961, -95.34521),
+        77004 : (29.72477, -95.36498),
+        77005 : (29.71824, -95.42413),
+        77006 : (29.74086, -95.39126),
+        77007 : (29.77242, -95.41052),
+        77008 : (29.79962, -95.41046),
+        77009 : (29.79176, -95.36760),
+        77010 : (29.75314, -95.35747),
+        77011 : (29.74336, -95.30439),
+        77012 : (29.70974, -95.28260),
+        77013 : (29.78747, -95.21996),
+        77014 : (29.98213, -95.46244),
+        77015 : (29.78669, -95.18601),
+        77016 : (29.85719, -95.30002),
+        77017 : (29.68472, -95.25424),
+        77018 : (29.82655, -95.42663),
+        77019 : (29.75290, -95.41066),
+        77020 : (29.77553, -95.30136),
+        77021 : (29.69757, -95.35047),
+        77022 : (29.82863, -95.37664),
+        77023 : (29.72466, -95.31802),
+        77024 : (29.76715, -95.50563),
+        77025 : (29.68894, -95.43402),
+        77026 : (29.79951, -95.32671),
+        77027 : (29.73995, -95.44335),
+        77028 : (29.82713, -95.26845),
+        77029 : (29.76330, -95.26177),
+        77030 : (29.70597, -95.40253),
+        77031 : (29.65221, -95.54623),
+        77032 : (29.93835, -95.34247),
+        77033 : (29.66757, -95.34163),
+        77034 : (29.63464, -95.21764),
+        77035 : (29.65269, -95.47688),
+        77036 : (29.70041, -95.53820),
+        77037 : (29.90046, -95.40978),
+        77038 : (29.91565, -95.44023),
+        77039 : (29.90221, -95.33851),
+        77040 : (29.88052, -95.52274),
+        77041 : (29.87938, -95.58588),
+        77042 : (29.74046, -95.55901),
+        77043 : (29.80865, -95.56048),
+        77044 : (29.87541, -95.19709),
+        77045 : (29.63319, -95.42477),
+        77046 : (29.73386, -95.43165),
+        77047 : (29.62741, -95.38158),
+        77048 : (29.62974, -95.32549),
+        77049 : (29.81149, -95.15944),
+        77050 : (29.88912, -95.26770),
+        77051 : (29.65846, -95.36788),
+        77053 : (29.59165, -95.46011),
+        77054 : (29.68268, -95.40384),
+        77055 : (29.79688, -95.49566),
+        77056 : (29.74178, -95.46843),
+        77057 : (29.73815, -95.48502),
+        77058 : (29.56167, -95.09252),
+        77059 : (29.59887, -95.11537),
+        77060 : (29.93526, -95.39834),
+        77061 : (29.65566, -95.27889),
+        77062 : (29.57642, -95.13786),
+        77063 : (29.73726, -95.52314),
+        77064 : (29.91453, -95.55649),
+        77065 : (29.92915, -95.61607),
+        77066 : (29.95952, -95.50134),
+        77067 : (29.95349, -95.45072),
+        77068 : (30.00302, -95.47963),
+        77069 : (29.98619, -95.52312),
+        77070 : (29.97831, -95.57229),
+        77071 : (29.65257, -95.52063),
+        77072 : (29.70052, -95.58442),
+        77073 : (29.99616, -95.40651),
+        77074 : (29.69144, -95.51573),
+        77075 : (29.62059, -95.26134),
+        77076 : (29.85739, -95.38343),
+        77077 : (29.74721, -95.62213),
+        77078 : (29.85337, -95.26289),
+        77079 : (29.77594, -95.60134),
+        77080 : (29.81544, -95.52211),
+        77081 : (29.71406, -95.48079),
+        77082 : (29.72843, -95.63738),
+        77083 : (29.69422, -95.64367),
+        77084 : (29.82749, -95.65992),
+        77085 : (29.62442, -95.48803),
+        77086 : (29.92852, -95.49576),
+        77087 : (29.68441, -95.30458),
+        77088 : (29.88062, -95.45274),
+        77089 : (29.58792, -95.22088),
+        77090 : (30.01713, -95.44653),
+        77091 : (29.85360, -95.44288),
+        77092 : (29.83169, -95.47378),
+        77093 : (29.86102, -95.34198),
+        77094 : (29.77058, -95.69305),
+        77095 : (29.90132, -95.64813),
+        77096 : (29.67464, -95.47965),
+        77098 : (29.73542, -95.41791),
+        77099 : (29.67879, -95.58541),
+        77204 : (29.72090, -95.36778)
+        }
 
 def ensure_dir(path: str) -> None:
     Path(path).mkdir(parents=True, exist_ok=True)
@@ -405,51 +503,56 @@ def step2_spatial_impact(
     return meta
 
 
-# =============================================================================
-# Step 3: Add simple time features
-# =============================================================================
+def step3_add_time_features(
+    input_csv: str,
+    output_csv: str,
+    metadata_json: str,
+    time_col: str,
+    logger: PipelineLogger,
+) -> Dict:
+    logger.section("Step 3 - Add time-derived features")
+
+    df = pd.read_csv(input_csv).copy()
+    if time_col not in df.columns:
+        raise ValueError(f"Time column not found: {time_col}")
+
+    dt = pd.to_datetime(df[time_col], errors="coerce")
+    added = []
+
+    feature_map = {
+        "year": dt.dt.year,
+        "month": dt.dt.month,
+        "month_sin": np.sin(2*np.pi*dt.dt.month/12),
+        "month_cos": np.cos(2*np.pi*dt.dt.month/12),
+        "day": dt.dt.day,
+        # "day_sin": np.sin(2*np.pi*dt.dt.day),
+        # "day_cos": np.cos(2*np.pi*dt.dt.day),
+        "hour": dt.dt.hour,
+        "hour_sin": np.sin(2*np.pi*dt.dt.hour/24),
+        "hour_cos": np.cos(2*np.pi*dt.dt.hour/24),
+        "day_of_week": dt.dt.dayofweek,
+        "day_of_week_sin": np.sin(2*np.pi*dt.dt.day_of_week/7),
+        "day_of_week_cos": np.cos(2*np.pi*dt.dt.day_of_week/7),
+        "day_of_year": dt.dt.dayofyear,
+        "is_weekend": dt.dt.dayofweek.isin([5, 6]).astype(int),
+    }
+
+    for col, values in feature_map.items():
+        df[col] = values
+        added.append(col)
+
+    df.to_csv(output_csv, index=False)
 
 
-# def step3_add_time_features(
-#     input_csv: str,
-#     output_csv: str,
-#     metadata_json: str,
-#     time_col: str,
-#     logger: PipelineLogger,
-# ) -> Dict:
-#     logger.section("Step 3 - Add time-derived features")
+    meta = {"added_time_columns": added, "output_csv": output_csv}
+    json_dump(metadata_json, meta)
 
-#     df = pd.read_csv(input_csv).copy()
-#     if time_col not in df.columns:
-#         raise ValueError(f"Time column not found: {time_col}")
 
-#     dt = pd.to_datetime(df[time_col], errors="coerce")
-#     added = []
+    logger.kv("added_time_columns", added)
+    logger.kv("output_csv", output_csv)
+    logger.kv("metadata_json", metadata_json)
 
-#     feature_map = {
-#         "year": dt.dt.year,
-#         "month": dt.dt.month,
-#         "day": dt.dt.day,
-#         "hour": dt.dt.hour,
-#         "day_of_week": dt.dt.dayofweek,
-#         "day_of_year": dt.dt.dayofyear,
-#         "is_weekend": dt.dt.dayofweek.isin([5, 6]).astype("Int64"),
-#     }
-
-#     for col, values in feature_map.items():
-#         df[col] = values
-#         added.append(col)
-
-#     df.to_csv(output_csv, index=False)
-
-#     meta = {"added_time_columns": added, "output_csv": output_csv}
-#     json_dump(metadata_json, meta)
-
-#     logger.kv("added_time_columns", added)
-#     logger.kv("output_csv", output_csv)
-#     logger.kv("metadata_json", metadata_json)
-
-#     return meta
+    return meta
 
 
 # =============================================================================
@@ -527,51 +630,49 @@ def step4_expand_direction_columns(
 
 def step5_add_lat_lon(
     input_csv: str,
-    zip_shapefile: str,
+    zip_shapefile: str,   # kept only for API compatibility; not used
     output_csv: str,
     metadata_json: str,
     zip_col: str,
     logger: PipelineLogger,
 ) -> Dict:
-    logger.section("Step 5 - Add latitude/longitude from ZIP centroids")
+    logger.section("Step 5 - Add latitude/longitude from ZIP mapping")
 
     df = pd.read_csv(input_csv).copy()
     df[zip_col] = coerce_zip_series(df[zip_col])
 
-    zcta = gpd.read_file(zip_shapefile)
-    zcta_zip_col = detect_column(zcta.columns, ["ZCTA5CE20", "ZCTA5CE10", "GEOID20", "GEOID10", "zip", "zcta"])
-    if zcta_zip_col is None:
-        raise ValueError("Could not detect ZIP/ZCTA column in ZIP shapefile.")
+    mapping = pd.DataFrame(
+        [
+            {
+                zip_col: int(zip_code),
+                "latitude": float(lat),
+                "longitude": float(lon),
+            }
+            for zip_code, (lat, lon) in zip_code_to_lat_long_map.items()
+        ]
+    )
 
-    zcta = zcta.copy()
-    zcta["zip_norm"] = coerce_zip_series(zcta[zcta_zip_col])
-    needed = set(df[zip_col].dropna().unique().tolist())
-    zcta = zcta[zcta["zip_norm"].isin(needed)].copy()
-    if zcta.empty:
-        raise ValueError("No ZIPs from the pipeline data were found in the shapefile.")
-
-    zcta_proj = zcta.to_crs("EPSG:3857")
-    cent_proj = zcta_proj.geometry.centroid
-    cent_ll = gpd.GeoSeries(cent_proj, crs="EPSG:3857").to_crs("EPSG:4326")
-
-    mapping = pd.DataFrame({
-        zip_col: zcta_proj["zip_norm"].tolist(),
-        "latitude": cent_ll.y.astype(float),
-        "longitude": cent_ll.x.astype(float),
-    })
+    mapping[zip_col] = coerce_zip_series(mapping[zip_col])
 
     out = df.merge(mapping, on=zip_col, how="left")
     out.to_csv(output_csv, index=False)
 
+    zip_values = set(df[zip_col].dropna().unique().tolist())
+    mapped_zip_values = set(mapping[zip_col].dropna().unique().tolist())
+    missing_zips = sorted(zip_values - mapped_zip_values)
+
     meta = {
-        "zip_count_mapped": int(len(mapping)),
+        "zip_count_mapped": int(len(mapped_zip_values & zip_values)),
         "added_columns": ["latitude", "longitude"],
-        "zcta_zip_column": zcta_zip_col,
+        "mapping_source": "zip_code_to_lat_long_map",
+        "missing_zip_count": int(len(missing_zips)),
+        "missing_zips": missing_zips,
         "output_csv": output_csv,
     }
     json_dump(metadata_json, meta)
 
-    logger.kv("zip_count_mapped", int(len(mapping)))
+    logger.kv("zip_count_mapped", int(len(mapped_zip_values & zip_values)))
+    logger.kv("missing_zip_count", int(len(missing_zips)))
     logger.kv("output_csv", output_csv)
     logger.kv("metadata_json", metadata_json)
 
@@ -659,7 +760,6 @@ def step7_split_variant_invariant(
 
     time_invariant_df = df[invariant_cols].drop_duplicates(subset=[zip_col]).sort_values(zip_col).reset_index(drop=True)
 
-    # Safety check: make sure invariant columns are actually invariant per ZIP.
     non_invariant = {}
     for c in invariant_feature_cols:
         nunq = df.groupby(zip_col, dropna=False)[c].nunique(dropna=False)
@@ -688,6 +788,89 @@ def step7_split_variant_invariant(
     logger.kv("time_invariant_columns", time_invariant_df.columns.tolist())
     logger.kv("row_counts", meta["row_counts"])
     logger.kv("non_invariant_columns_detected", non_invariant)
+    logger.kv("metadata_json", metadata_json)
+
+    return meta
+
+
+# =============================================================================
+# Step 8: Add past-timestep features to time-varying CSV
+# =============================================================================
+
+
+def step8_add_past_features_to_time_variant(
+    input_csv: str,
+    output_csv: str,
+    metadata_json: str,
+    time_col: str,
+    zip_col: str,
+    feature_cols: List[str],
+    num_past_feats: int,
+    logger: PipelineLogger,
+) -> Dict:
+    logger.section("Step 8 - Add past-timestep features to time-varying CSV")
+
+    df = pd.read_csv(input_csv).copy()
+
+    if num_past_feats <= 0 or not feature_cols:
+        df.to_csv(output_csv, index=False)
+        meta = {
+            "skipped": True,
+            "reason": "No lag features requested.",
+            "requested_feature_columns": feature_cols,
+            "num_past_feats": num_past_feats,
+            "output_csv": output_csv,
+        }
+        json_dump(metadata_json, meta)
+        logger.kv("skipped", True)
+        logger.kv("reason", meta["reason"])
+        logger.kv("output_csv", output_csv)
+        logger.kv("metadata_json", metadata_json)
+        return meta
+
+    missing_required = [c for c in [time_col, zip_col] if c not in df.columns]
+    if missing_required:
+        raise ValueError(f"Missing required columns for past features: {missing_required}")
+
+    missing_features = [c for c in feature_cols if c not in df.columns]
+    if missing_features:
+        raise ValueError(f"Requested past-feature source columns not found: {missing_features}")
+
+    work = df.copy()
+    work[zip_col] = coerce_zip_series(work[zip_col])
+    work["__orig_order__"] = np.arange(len(work), dtype=np.int64)
+    work["__time_dt__"] = pd.to_datetime(work[time_col], errors="coerce")
+
+    sort_cols = [zip_col, "__time_dt__", "__orig_order__"]
+    work = work.sort_values(sort_cols, kind="stable").reset_index(drop=True)
+
+    added_columns: List[str] = []
+    for feat in feature_cols:
+        numeric_series = pd.to_numeric(work[feat], errors="coerce")
+        grouped = numeric_series.groupby(work[zip_col], dropna=False)
+        for lag in range(1, num_past_feats + 1):
+            new_col = f"{feat}_past_{lag}"
+            work[new_col] = grouped.shift(lag).fillna('nan')
+            added_columns.append(new_col)
+
+    work = work.sort_values("__orig_order__", kind="stable").drop(columns=["__orig_order__", "__time_dt__"])
+    work.to_csv(output_csv, index=False)
+
+    meta = {
+        "skipped": False,
+        "requested_feature_columns": feature_cols,
+        "num_past_feats": num_past_feats,
+        "added_columns": added_columns,
+        "num_added_columns": len(added_columns),
+        "output_csv": output_csv,
+    }
+    json_dump(metadata_json, meta)
+
+    logger.kv("requested_feature_columns", feature_cols)
+    logger.kv("num_past_feats", num_past_feats)
+    logger.kv("num_added_columns", len(added_columns))
+    logger.kv("added_columns", added_columns)
+    logger.kv("output_csv", output_csv)
     logger.kv("metadata_json", metadata_json)
 
     return meta
@@ -758,6 +941,30 @@ def main() -> None:
         action="store_true",
         help="Keep original direction columns after creating sin/cos columns.",
     )
+    ap.add_argument(
+        "--feats-for-past",
+        nargs="*",
+        default=[],
+        help=(
+            "Space-separated list of time-varying feature columns for which lagged past-step "
+            "columns should be added to the final time-varying CSV. Example: --feats-for-past AQI CM2_5"
+        ),
+    )
+    ap.add_argument(
+        "--num-past-feats",
+        type=int,
+        default=0,
+        help="Number of previous timesteps to add for each feature in --feats-for-past.",
+    )
+    ap.add_argument(
+        "--output-mode",
+        choices=["split", "combined"],
+        default="split",
+        help=(
+            "Choose whether to output separate time-variant/time-invariant CSVs "
+            "('split') or keep everything in a single CSV ('combined')."
+        ),
+    )
 
     args = ap.parse_args()
 
@@ -769,21 +976,25 @@ def main() -> None:
     intermediate = {
         "step1_merged_csv": os.path.join(args.output_dir, "intermediate", "01_merged.csv"),
         "step2_spatial_csv": os.path.join(args.output_dir, "intermediate", "02_with_spatial_impact.csv"),
-        # "step3_time_features_csv": os.path.join(args.output_dir, "intermediate", "03_with_time_features.csv"),
+        "step3_time_features_csv": os.path.join(args.output_dir, "intermediate", "03_with_time_features.csv"),
         "step4_direction_expanded_csv": os.path.join(args.output_dir, "intermediate", "04_direction_expanded.csv"),
         "step5_with_latlon_csv": os.path.join(args.output_dir, "intermediate", "05_with_latlon.csv"),
         "step6_variance_filtered_csv": os.path.join(args.output_dir, "intermediate", "06_variance_filtered.csv"),
+        "step7_time_variant_csv": os.path.join(args.output_dir, "intermediate", "07_time_variant_base.csv"),
+        "step7_time_invariant_csv": os.path.join(args.output_dir, "time_invariant_features.csv"),
         "final_time_variant_csv": os.path.join(args.output_dir, "time_variant_features.csv"),
         "final_time_invariant_csv": os.path.join(args.output_dir, "time_invariant_features.csv"),
+        "final_combined_csv": os.path.join(args.output_dir, "all_features.csv"),
     }
 
     meta_paths = {
         "spatial_impact_json": os.path.join(args.output_dir, "metadata", "02_spatial_impact.json"),
-        # "time_features_json": os.path.join(args.output_dir, "metadata", "03_time_features.json"),
+        "time_features_json": os.path.join(args.output_dir, "metadata", "03_time_features.json"),
         "direction_expand_json": os.path.join(args.output_dir, "metadata", "04_direction_expand.json"),
         "latlon_mapping_json": os.path.join(args.output_dir, "metadata", "05_latlon_mapping.json"),
         "variance_report_json": os.path.join(args.output_dir, "metadata", "06_variance_report.json"),
         "split_report_json": os.path.join(args.output_dir, "metadata", "07_split_report.json"),
+        "past_features_json": os.path.join(args.output_dir, "metadata", "08_past_features.json"),
     }
 
     step_log_path = os.path.join(args.output_dir, "logs", "pipeline_steps.log")
@@ -805,6 +1016,9 @@ def main() -> None:
             "exclude_variance": parse_csv_list(args.exclude_variance),
             "road_radius_km": args.road_radius_km,
             "facility_radius_km": args.facility_radius_km,
+            "feats_for_past": args.feats_for_past,
+            "num_past_feats": args.num_past_feats,
+            "output_mode": args.output_mode,
         },
     }
 
@@ -831,16 +1045,16 @@ def main() -> None:
         args.facility_radius_km,
     )
 
-    # s3 = step3_add_time_features(
-    #     intermediate["step2_spatial_csv"],
-    #     intermediate["step3_time_features_csv"],
-    #     meta_paths["time_features_json"],
-    #     args.time_col,
-    #     logger,
-    # )
+    s3 = step3_add_time_features(
+    intermediate["step2_spatial_csv"],
+    intermediate["step3_time_features_csv"],
+    meta_paths["time_features_json"],
+    args.time_col,
+    logger,
+    )
 
     s4 = step4_expand_direction_columns(
-        intermediate["step2_spatial_csv"],
+        intermediate["step3_time_features_csv"],
         intermediate["step4_direction_expanded_csv"],
         meta_paths["direction_expand_json"],
         logger,
@@ -881,37 +1095,82 @@ def main() -> None:
         "overall_spatial_impact_score",
     ]
 
-    s7 = step7_split_variant_invariant(
-        current_csv,
-        intermediate["final_time_variant_csv"],
-        intermediate["final_time_invariant_csv"],
-        meta_paths["split_report_json"],
-        args.time_col,
-        args.zip_col,
-        invariant_feature_cols,
-        logger,
-    )
+    if args.output_mode == "split":
+        s7 = step7_split_variant_invariant(
+            current_csv,
+            intermediate["step7_time_variant_csv"],
+            intermediate["step7_time_invariant_csv"],
+            meta_paths["split_report_json"],
+            args.time_col,
+            args.zip_col,
+            invariant_feature_cols,
+            logger,
+        )
+
+        s8 = step8_add_past_features_to_time_variant(
+            intermediate["step7_time_variant_csv"],
+            intermediate["final_time_variant_csv"],
+            meta_paths["past_features_json"],
+            args.time_col,
+            args.zip_col,
+            args.feats_for_past,
+            args.num_past_feats,
+            logger,
+        )
+
+        final_outputs = {
+            "mode": "split",
+            "time_variant_csv": intermediate["final_time_variant_csv"],
+            "time_invariant_csv": intermediate["final_time_invariant_csv"],
+        }
+
+    else:
+        s7 = {
+            "skipped": True,
+            "reason": "output_mode='combined'; split step not run.",
+        }
+
+        s8 = step8_add_past_features_to_time_variant(
+            current_csv,
+            intermediate["final_combined_csv"],
+            meta_paths["past_features_json"],
+            args.time_col,
+            args.zip_col,
+            args.feats_for_past,
+            args.num_past_feats,
+            logger,
+        )
+
+        final_outputs = {
+            "mode": "combined",
+            "combined_csv": intermediate["final_combined_csv"],
+        }
 
     logger.write()
 
     summary["steps"] = {
         "step1_merge": s1,
         "step2_spatial_impact": s2,
-        # "step3_add_time_features": s3,
+        "step3_add_time_features": s3,
         "step4_expand_direction_columns": s4,
         "step5_add_lat_lon": s5,
         "step6_variance_filter": s6,
         "step7_split_variant_invariant": s7,
+        "step8_add_past_features": s8,
     }
     summary["metadata_files"] = meta_paths
     summary["intermediate_files"] = intermediate
+    summary["final_outputs"] = final_outputs
 
     master_log_path = os.path.join(args.output_dir, "pipeline_full.log")
     write_master_log(master_log_path, summary, intermediate)
 
     print("\nPipeline complete.")
-    print(f"Time-varying CSV: {intermediate['final_time_variant_csv']}")
-    print(f"Time-invariant CSV: {intermediate['final_time_invariant_csv']}")
+    if args.output_mode == "split":
+        print(f"Time-varying CSV: {intermediate['final_time_variant_csv']}")
+        print(f"Time-invariant CSV: {intermediate['final_time_invariant_csv']}")
+    else:
+        print(f"Combined CSV: {intermediate['final_combined_csv']}")
     print(f"Pipeline summary log: {master_log_path}")
 
 
