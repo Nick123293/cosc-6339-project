@@ -996,7 +996,7 @@ def main() -> None:
         "step2_spatial_csv": os.path.join(args.output_dir, "intermediate", "02_with_spatial_impact.csv"),
         "step3_time_features_csv": os.path.join(args.output_dir, "intermediate", "03_with_time_features.csv"),
         "step4_direction_expanded_csv": os.path.join(args.output_dir, "intermediate", "04_direction_expanded.csv"),
-        "step5_with_latlon_csv": os.path.join(args.output_dir, "intermediate", "05_with_latlon.csv"),
+        # "step5_with_latlon_csv": os.path.join(args.output_dir, "intermediate", "05_with_latlon.csv"),
         "step6_variance_filtered_csv": os.path.join(args.output_dir, "intermediate", "06_variance_filtered.csv"),
         "step7_time_variant_csv": os.path.join(args.output_dir, "intermediate", "07_time_variant_base.csv"),
         "step7_time_invariant_csv": os.path.join(args.output_dir, "time_invariant_features.csv"),
@@ -1085,22 +1085,22 @@ def main() -> None:
         not args.keep_original_direction_columns,
     )
     logger.record_step_time("step4_expand_direction_columns", time.perf_counter()-t0)
-    t0 = time.perf_counter()
-    s5 = step5_add_lat_lon(
-        intermediate["step4_direction_expanded_csv"],
-        args.zip_shapefile,
-        intermediate["step5_with_latlon_csv"],
-        meta_paths["latlon_mapping_json"],
-        args.zip_col,
-        logger,
-    )
-    logger.record_step_time("step5_add_lat_lon", time.perf_counter()-t0)
-    current_csv = intermediate["step5_with_latlon_csv"]
+    # t0 = time.perf_counter()
+    # s5 = step5_add_lat_lon(
+    #     intermediate["step4_direction_expanded_csv"],
+    #     args.zip_shapefile,
+    #     intermediate["step5_with_latlon_csv"],
+    #     meta_paths["latlon_mapping_json"],
+    #     args.zip_col,
+    #     logger,
+    # )
+    # logger.record_step_time("step5_add_lat_lon", time.perf_counter()-t0)
+    # current_csv = intermediate["step5_with_latlon_csv"]
     s6 = {"skipped": True, "reason": "variance_threshold not provided"}
     if args.variance_threshold is not None:
         t0 = time.perf_counter()
         s6 = step6_variance_filter_time_variant_only(
-            current_csv,
+            intermediate["step4_direction_expanded_csv"],
             intermediate["step6_variance_filtered_csv"],
             meta_paths["variance_report_json"],
             parse_csv_list(args.exclude_variance),
@@ -1184,7 +1184,7 @@ def main() -> None:
         "step2_spatial_impact": s2,
         "step3_add_time_features": s3,
         "step4_expand_direction_columns": s4,
-        "step5_add_lat_lon": s5,
+        # "step5_add_lat_lon": s5,
         "step6_variance_filter": s6,
         "step7_split_variant_invariant": s7,
         "step8_add_past_features": s8,
