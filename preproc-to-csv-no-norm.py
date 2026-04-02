@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
@@ -178,6 +179,8 @@ class PipelineLogger:
     def __init__(self, path: str):
         self.path = path
         self.lines: List[str] = []
+        self.step_timings: Dict[str, float] = {}
+        self.total_runtime_seconds: Optional[float] = None
 
     def section(self, title: str) -> None:
         self.lines.append("\n" + "=" * 100)
@@ -187,6 +190,13 @@ class PipelineLogger:
     def add(self, msg: str = "") -> None:
         self.lines.append(msg)
 
+    def record_step_time(self, step_name:str, seconds: float) -> None:
+        self.step_timings[step_name] = float(seconds)
+        self.kv(f"{step_name}_runtime_seconds", round(float(seconds),6))
+
+    def record_total_runtime(self, seconds: float) -> None:
+        self.total_runtime_seconds = float(seconds)
+
     def kv(self, key: str, value) -> None:
         if isinstance(value, (dict, list, tuple)):
             self.lines.append(f"{key}: {json.dumps(value, indent=2, default=str)}")
@@ -194,6 +204,14 @@ class PipelineLogger:
             self.lines.append(f"{key}: {value}")
 
     def write(self) -> None:
+        if self.step_timings or self.total_runtime_seconds is not None:
+            self.lines.append("\n" + "=" * 100)
+            self.lines.append("TIMING SUMMARY")
+            self.lines.append("=" * 100)
+            for step_name, seconds in self.step_timings.items():
+                self.lines.append(f"{step_name}: {seconds:.6f} seconds")
+            if self.total_runtime_seconds is not None:
+                self.lines.append(f"total_pipeline_runtime: {self.total_runtime_seconds:.6f} seconds")
         Path(self.path).write_text("\n".join(self.lines), encoding="utf-8")
 
 
@@ -999,6 +1017,7 @@ def main() -> None:
 
     step_log_path = os.path.join(args.output_dir, "logs", "pipeline_steps.log")
     logger = PipelineLogger(step_log_path)
+    pipeline_start = time.perf_counter()
 
     summary = {
         "inputs": {
@@ -1021,7 +1040,7 @@ def main() -> None:
             "output_mode": args.output_mode,
         },
     }
-
+    t0 = time.perf_counter()
     s1 = step1_merge(
         args.air_quality,
         args.weather,
@@ -1030,7 +1049,8 @@ def main() -> None:
         args.zip_col,
         logger,
     )
-
+    logger.record_step_time("step1_merge", time.perf_counter()-t0)
+    t0 = time.perf_counter()
     s2 = step2_spatial_impact(
         intermediate["step1_merged_csv"],
         args.tri_facilities,
@@ -1044,7 +1064,8 @@ def main() -> None:
         args.road_radius_km,
         args.facility_radius_km,
     )
-
+    logger.record_step_time("step2_spatial_impact", time.perf_counter()-t0)
+    t0 = time.perf_counter()
     s3 = step3_add_time_features(
     intermediate["step2_spatial_csv"],
     intermediate["step3_time_features_csv"],
@@ -1052,7 +1073,8 @@ def main() -> None:
     args.time_col,
     logger,
     )
-
+    logger.record_step_time("step3_add_time_features", time.perf_counter()-t0)
+    t0 = time.perf_counter()
     s4 = step4_expand_direction_columns(
         intermediate["step3_time_features_csv"],
         intermediate["step4_direction_expanded_csv"],
@@ -1062,7 +1084,8 @@ def main() -> None:
         not args.no_auto_detect_direction_columns,
         not args.keep_original_direction_columns,
     )
-
+    logger.record_step_time("step4_expand_direction_columns", time.perf_counter()-t0)
+    t0 = time.perf_counter()
     s5 = step5_add_lat_lon(
         intermediate["step4_direction_expanded_csv"],
         args.zip_shapefile,
@@ -1071,10 +1094,11 @@ def main() -> None:
         args.zip_col,
         logger,
     )
-
+    logger.record_step_time("step5_add_lat_lon", time.perf_counter()-t0)
     current_csv = intermediate["step5_with_latlon_csv"]
     s6 = {"skipped": True, "reason": "variance_threshold not provided"}
     if args.variance_threshold is not None:
+        t0 = time.perf_counter()
         s6 = step6_variance_filter_time_variant_only(
             current_csv,
             intermediate["step6_variance_filtered_csv"],
@@ -1083,8 +1107,10 @@ def main() -> None:
             args.variance_threshold,
             logger,
         )
+        logger.record_step_time("step6_variance_filter_time_variant_only", time.perf_counter()-t0)
         current_csv = intermediate["step6_variance_filtered_csv"]
-
+    else:
+        logger.record_step_time("step6_variance_filter_time_variant_only", float(0))
     invariant_feature_cols = [
         "latitude",
         "longitude",
@@ -1096,6 +1122,7 @@ def main() -> None:
     ]
 
     if args.output_mode == "split":
+        t0 = time.perf_counter()
         s7 = step7_split_variant_invariant(
             current_csv,
             intermediate["step7_time_variant_csv"],
@@ -1106,7 +1133,8 @@ def main() -> None:
             invariant_feature_cols,
             logger,
         )
-
+        logger.record_step_time("step7_split_variant_invariant", time.perf_counter()-t0)
+        t0 = time.perf_counter()
         s8 = step8_add_past_features_to_time_variant(
             intermediate["step7_time_variant_csv"],
             intermediate["final_time_variant_csv"],
@@ -1117,6 +1145,7 @@ def main() -> None:
             args.num_past_feats,
             logger,
         )
+        logger.record_step_time("step8_add_past_features_to_time_variant", time.perf_counter()-t0)
 
         final_outputs = {
             "mode": "split",
@@ -1129,7 +1158,8 @@ def main() -> None:
             "skipped": True,
             "reason": "output_mode='combined'; split step not run.",
         }
-
+        logger.record_step_time("step7_split_variant_invariant", float(0))
+        t0 = time.perf_counter()
         s8 = step8_add_past_features_to_time_variant(
             current_csv,
             intermediate["final_combined_csv"],
@@ -1140,12 +1170,13 @@ def main() -> None:
             args.num_past_feats,
             logger,
         )
-
+        logger.record_step_time("step8_add_past_features_to_time_variant", time.perf_counter()-t0)
         final_outputs = {
             "mode": "combined",
             "combined_csv": intermediate["final_combined_csv"],
         }
-
+    total_runtime = time.perf_counter() - pipeline_start
+    logger.record_total_runtime(total_runtime)
     logger.write()
 
     summary["steps"] = {
@@ -1158,20 +1189,27 @@ def main() -> None:
         "step7_split_variant_invariant": s7,
         "step8_add_past_features": s8,
     }
+    summary["timing"] = {
+        "step_runtime_seconds": logger.step_timings,
+        "total_pipeline_runtime_seconds": logger.total_runtime_seconds,
+    }
     summary["metadata_files"] = meta_paths
     summary["intermediate_files"] = intermediate
     summary["final_outputs"] = final_outputs
 
+
     master_log_path = os.path.join(args.output_dir, "pipeline_full.log")
     write_master_log(master_log_path, summary, intermediate)
-
+    
     print("\nPipeline complete.")
     if args.output_mode == "split":
         print(f"Time-varying CSV: {intermediate['final_time_variant_csv']}")
         print(f"Time-invariant CSV: {intermediate['final_time_invariant_csv']}")
+        
     else:
         print(f"Combined CSV: {intermediate['final_combined_csv']}")
     print(f"Pipeline summary log: {master_log_path}")
+    print(f"Total runtime: {total_runtime:.6f} seconds")
 
 
 if __name__ == "__main__":
