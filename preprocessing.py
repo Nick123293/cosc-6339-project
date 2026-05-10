@@ -24,6 +24,7 @@ In addition, we use US Census TIGER/Line shapefiles for roads for Texas, which c
 https://www.census.gov/cgi-bin/geo/shapefiles/index.php?year=2025&layergroup=Roads
 To retrieve this data, click the above link, then select the state of Texas in the "Select a State:" down under "Primary and Secondary Roads", then press download.
 For simplicity this file is not reduced in size, since depending on the road-radius-km command line argument, roads outside of houston may affect some zip codes. 
+The files resulting from these links and preprocessing is also available on the github: https://github.com/GlowSand/AQ_ML_Pipeline
 No further data preprocessing is needed. A sample run for this script looks like:
 py preprocessing.py --air-quality ../data/air-quality-master-VALIDATION-tz-stripped.csv --weather ../data/weather-master-VALIDATION-tz-stripped.csv \
 --tri-facilities ../data/important-locations/tri_facilities_houston.csv --tri-chemicals ../data/important-locations/tri_chemicals_houston.csv \
