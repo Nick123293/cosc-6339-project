@@ -1,531 +1,822 @@
-# Preprocessing Pipeline for RNN Air-Quality Forecasting
+# Houston AQ/Weather Preprocessing Pipeline
 
-# NOTE:
-Before using run_pipeline.sh you need to run strip_tz_info.py to make the time column an acceptable format. This is done through:  
-`python3 strip_tz_info.py /path/to/input /path/to/output`
+This README documents the preprocessing workflow used to convert streamed Houston air-quality and weather CSV files into a single machine-learning-ready feature table. The pipeline merges hourly air-quality and weather data, normalizes time formatting, optionally removes redundant columns, filters ZIP Code Tabulation Area geometry to only the ZIP codes present in the dataset, precomputes static spatial relationships, and writes a final feature CSV with temporal, wind-direction, spatial-impact, lag, cardinality, and optional variance-filter metadata.
 
-This repository contains a Python preprocessing pipeline for converting merged air-quality, weather, ZIP-level spatial context, and TRI emissions data into tensors suitable for PyTorch RNN training.
+The workflow is built around these scripts:
 
-The pipeline performs:
+- `merge_data_into_master_file.py`
+- `strip_tz_info.py`
+- `remove_column.py`
+- `filter_houston_zcta.py`
+- `preprocessing.py`
 
-1. **Merge** air-quality and weather CSVs on matching `time` and `zip`
-2. **Compute ZIP-level spatial impact features** using roads and TRI facilities/chemicals
-3. **Expand wind-direction columns** into cyclic `sin` / `cos` features
-4. **Normalize** numeric features (excluding specified columns)
-5. **Remove low-variance features**
-6. **Apply PCA** to the remaining feature columns
-7. **Encode ZIP locations with a Hilbert curve**
-8. **Create a tensor** with dimensions `[time, PCA_features, hilbert_position]`
-9. **Split** the tensor by timestep into train / validation / test
-10. **Fill missing values independently** in each split using iterative 2D Lorenzo-style prediction
-11. **Optionally export RNN-ready arrays** by flattening `[feature, hilbert]` per timestep for plain PyTorch RNN/GRU/LSTM usage
+`filter_houston_zcta.py` is referenced by the pipeline comments, but its script body was not included in the provided files. The command and purpose below are based on the header documentation in `preprocessing.py`.
 
 ---
 
-## Files
+## 1. What the pipeline produces
 
-- `preprocessing-pipeline.py` — main Python pipeline
-- `run_pipeline.sh` — bash wrapper for invoking the pipeline
+The main output is:
 
----
+```text
+<output-dir>/all_features.csv
+```
 
-## Input Data
+This file is a merged and feature-engineered table where rows are keyed by:
 
-### Required CSV inputs
-- Air-quality CSV
-- Weather CSV
-- TRI facilities CSV
-- TRI chemicals CSV
+```text
+zip, time
+```
 
-### Required shapefiles
-- ZIP/ZCTA shapefile (for ZIP geometry / centroids)
-- Roads shapefile (for nearby-road influence)
+Depending on the command-line options used, the final table can include:
 
-### Optional shapefile
-- Place shapefile  
-  Accepted as an argument for completeness, but not used by the current pipeline logic.
+- Raw air-quality features, such as AQI and pollutant values.
+- Raw weather features, such as wind speed, wind direction, temperature, humidity, precipitation, and radiation.
+- Wind direction converted into sine/cosine columns.
+- Calendar/time features such as month, hour, day of week, weekend flag, and cyclic sine/cosine encodings.
+- Spatial impact features:
+  - `road_impact_score`
+  - `facility_impact_score`
+- Lag features such as `us_aqi_past_1`, `us_aqi_past_2`, etc.
+- Optional low-cardinality-filtered and variance-filtered columns.
 
----
+The main script also writes metadata and logs:
 
-## Expected Core Columns
+```text
+<output-dir>/metadata/pipeline_summary.json
+<output-dir>/metadata/spatial_lookup.json
+<output-dir>/metadata/cardinality_report.json       # if cardinality filtering is enabled
+<output-dir>/metadata/variance_report.json          # if variance filtering is enabled
+<output-dir>/logs/pipeline_steps.log
+<output-dir>/intermediate/pre_filter_all_features.csv
+<output-dir>/intermediate/pre_variance_all_features.csv
+```
 
-The pipeline assumes:
-
-- a **time column** (default: `time`)
-- a **ZIP column** (default: `zip`)
-
-These can be overridden with:
-- `--time-col`
-- `--zip-col`
-
-### Time format
-The pipeline standardizes common timestamp formats into:
-
-`YYYY-MM-DD HH:MM:SS`
-
-### ZIP format
-ZIP values are coerced to 5-digit ZIP codes.
+Temporary sorted run files are created during external sorting. They are removed by default unless `--keep-temp-files` is passed.
 
 ---
 
-## Dependencies
+## 2. Data sources used
 
-Install the required Python packages:
+### 2.1 Streamed air-quality CSV files
+
+**Used by:**
+
+- `merge_data_into_master_file.py`
+- `strip_tz_info.py`
+- `remove_column.py`, optional
+- `filter_houston_zcta.py`
+- `preprocessing.py`
+
+**Purpose:**
+
+The air-quality files provide pollutant and AQI features by ZIP code and time. They are first appended into a single master air-quality CSV, then time-zone suffixes are stripped, and then they are merged with the weather master file in `preprocessing.py`.
+
+Expected filenames must contain:
+
+```text
+_air_quality_
+```
+
+For example:
+
+```text
+feb_4thweek_air_quality_hourly_20260312_210107.csv
+march_10_air_quality_hourly_20260401_120609.csv
+```
+
+The merge script sorts files using the month token and numeric part of the second token in the filename. That means the naming convention matters.
+
+**How to gather:**
+
+The referenced upstream GitHub repository documents hourly air-quality collection through the Open-Meteo Air Quality API. It also stores generated CSV outputs in its `data/` folder. The repository can be used as a reference implementation for gathering the streamed air-quality files:
+
+```text
+https://github.com/GlowSand/AQ_ML_Pipeline/tree/master
+```
+
+That repository lists Open-Meteo Air Quality API as the source for PM2.5, PM10, AQI, CO, NO2, ozone, and related air-quality variables.
+
+---
+
+### 2.2 Streamed weather CSV files
+
+**Used by:**
+
+- `merge_data_into_master_file.py`
+- `strip_tz_info.py`
+- `remove_column.py`, optional
+- `preprocessing.py`
+
+**Purpose:**
+
+The weather files provide hourly meteorological features by ZIP code and time. In the current spatial-impact logic, the most important weather variables are:
+
+```text
+wind_speed_10m
+wind_speed_100m
+wind_direction_10m
+wind_direction_100m
+```
+
+or, after direction expansion:
+
+```text
+wind_direction_10m_cos
+wind_direction_10m_sin
+wind_direction_100m_cos
+wind_direction_100m_sin
+```
+
+These are used to compute downwind road and facility impact scores.
+
+Expected filenames must contain:
+
+```text
+_weather_
+```
+
+For example:
+
+```text
+march_1stweek_weather_hourly_20260315_120000.csv
+```
+
+**How to gather:**
+
+The referenced upstream GitHub repository documents hourly weather collection through the Open-Meteo Weather API. It lists weather variables such as temperature, humidity, wind, and precipitation as collected data sources.
+
+---
+
+### 2.3 TRI facilities CSV
+
+**Used by:**
+
+- `preprocessing.py`
+
+**Expected file:**
+
+```text
+tri_facilities_houston.csv
+```
+
+**Purpose:**
+
+This file provides the locations of toxic-release facilities near Houston. The current preprocessing script expects columns equivalent to:
+
+```text
+trifd
+latitude
+longitude
+facility
+total_air_emissions_lbs
+```
+
+The important columns used directly by `preprocessing.py` are:
+
+```text
+trifd
+latitude
+longitude
+total_air_emissions_lbs
+```
+
+The script converts facility latitude/longitude into point geometry and computes ZIP-to-facility distances and directions. These are used to build `facility_impact_score`.
+
+**How to gather:**
+
+The provided `preprocessing.py` header says this project used `tri_facilities_houston.csv` from the repository/static data and did not require additional preprocessing before using it in `preprocessing.py`.
+
+The referenced upstream GitHub repository also includes `process_tri_data.py` and notes that TRI text files are processed separately. Use that repository as a reference if regenerating TRI CSVs from raw EPA TRI files.
+
+---
+
+### 2.4 TRI chemicals CSV
+
+**Used by:**
+
+- `preprocessing.py`
+
+**Expected file:**
+
+```text
+tri_chemicals_houston.csv
+```
+
+**Purpose:**
+
+This file provides chemical-level release information for each TRI facility. The current preprocessing script expects columns equivalent to:
+
+```text
+trifd
+chemical
+total_air_emissions_lbs
+```
+
+It groups chemical data by facility and computes:
+
+- Total reported air emissions per facility.
+- Number of unique chemicals per facility.
+
+Those values are combined into a facility severity term used in `facility_impact_score`.
+
+**How to gather:**
+
+Use the provided `tri_chemicals_houston.csv` from the project data/static data if available through Git LFS. If regenerating from raw TRI files, use the referenced AQ pipeline repository as a guide.
+
+---
+
+### 2.5 US Census ZIP Code Tabulation Area shapefile
+
+**Used by:**
+
+- `filter_houston_zcta.py`
+- `preprocessing.py`
+
+**Purpose:**
+
+The ZCTA shapefile provides ZIP polygon geometry. The pipeline uses it to:
+
+1. Filter the national ZCTA file to only ZIP codes appearing in the collected Houston data.
+2. Compute ZIP centroids.
+3. Measure distances and directions from ZIP centroids to roads and facilities.
+
+The preprocessing script tries to detect one of these ZIP columns:
+
+```text
+ZCTA5CE20
+ZCTA5CE10
+GEOID20
+GEOID10
+zip
+zcta
+```
+
+**How to gather:**
+
+Download the 2020 national ZIP Code Tabulation Area shapefile from the US Census TIGER/Line shapefile portal:
+
+```text
+https://www.census.gov/cgi-bin/geo/shapefiles/index.php?year=2020&layergroup=ZIP%20Code%20Tabulation%20Areas
+```
+
+Select the national ZIP Code Tabulation Areas file, unzip it, and point `filter_houston_zcta.py` to the `.shp` file.
+
+---
+
+### 2.6 US Census TIGER/Line Texas roads shapefile
+
+**Used by:**
+
+- `preprocessing.py`
+
+**Purpose:**
+
+The roads shapefile provides road geometry for spatial-impact scoring. The pipeline finds roads within `--road-radius-km` of each ZIP centroid, computes the direction from the road to the ZIP centroid, and combines that direction with wind vectors to estimate a downwind road-impact score.
+
+**How to gather:**
+
+Download the 2025 Texas Primary and Secondary Roads shapefile from the US Census TIGER/Line roads portal:
+
+```text
+https://www.census.gov/cgi-bin/geo/shapefiles/index.php?year=2025&layergroup=Roads
+```
+
+Under `Primary and Secondary Roads`, select Texas and download the shapefile. No size reduction is required before using it in this pipeline.
+
+---
+
+## 3. Getting data through Git LFS
+
+Some project data is stored through Git Large File Storage. To download those files from a repository that uses Git LFS:
 
 ```bash
-pip install pandas numpy scikit-learn geopandas shapely pyproj
+sudo apt install git-lfs
+
+git lfs install
+
+git clone <repo-url>
+cd <repo-name>
+
+git lfs pull
 ```
 
-Depending on your system, `geopandas` may also require system GIS libraries.
+For this project, the expected project data includes the repository `data/` folder plus:
+
+```text
+tri_chemicals_houston.csv
+tri_facilities_houston.csv
+```
+
+The referenced AQ pipeline repository contains `data/` and `static data/` folders and can be used as a model for organizing the data files.
 
 ---
 
-## How the pipeline works
+## 4. Recommended directory layout
 
-### 1. Merge air-quality and weather
-The two CSV files are merged using an **inner join** on:
-
-- `time`
-- `zip`
-
-If both files contain non-key columns with the same name, only one copy is kept.
-
-### 2. Compute ZIP-level spatial impact features
-The pipeline creates several ZIP-level spatial features:
-
-- `road_distance_m`
-- `road_impact_score`
-- `facility_count_nearby`
-- `facility_impact_score`
-- `overall_spatial_impact_score`
-
-#### Road score
-For each ZIP code, the ZIP centroid is used to measure distance to the nearest road.
-
-Raw road score:
+A clean project layout might look like this:
 
 ```text
-exp(-distance_to_nearest_road_m / road_radius_m)
+project-root/
+├── scripts/
+│   ├── merge_data_into_master_file.py
+│   ├── strip_tz_info.py
+│   ├── remove_column.py
+│   ├── filter_houston_zcta.py
+│   └── preprocessing.py
+├── data/
+│   ├── raw-streamed/
+│   │   ├── feb_4thweek_air_quality_hourly_20260312_210107.csv
+│   │   ├── feb_4thweek_weather_hourly_20260312_210107.csv
+│   │   └── ...
+│   ├── important-locations/
+│   │   ├── tri_facilities_houston.csv
+│   │   └── tri_chemicals_houston.csv
+│   ├── census-zcta-2020/
+│   │   └── tl_2020_us_zcta520.shp
+│   ├── texas-shape-data/
+│   │   └── tl_2025_48_prisecroads.shp
+│   ├── air-quality-master.csv
+│   ├── weather-master.csv
+│   ├── air-quality-master-tz-stripped.csv
+│   ├── weather-master-tz-stripped.csv
+│   └── houston_zcta_filtered.shp
+└── data/pipeline-output/
 ```
 
-This is then scaled to `[0, 1]` over the ZIP codes in the dataset.
-
-#### Facility score
-For each TRI facility, the pipeline estimates a severity score using:
-
-- total release / air emissions
-- number of unique chemicals
-
-Facility severity is computed as:
-
-```text
-0.7 * normalized_total_release + 0.3 * normalized_unique_chemical_count
-```
-
-Facility impact on a ZIP is then:
-
-```text
-facility_severity * exp(-distance_zip_to_facility_m / facility_radius_m)
-```
-
-The facility score for a ZIP is the sum of nearby facility impacts, then scaled to `[0, 1]`.
-
-#### Overall spatial impact score
-The final combined score is:
-
-```text
-0.4 * road_impact_score + 0.6 * facility_impact_score
-```
-
-### 3. Expand directional columns into sin/cos
-Columns representing directions, such as:
-
-- `wind_direction_10m`
-- `wind_direction_100m`
-
-are converted into:
-
-- `<column>_sin`
-- `<column>_cos`
-
-This avoids the discontinuity problem of angular data, where `359` degrees and `1` degree are numerically far apart but physically close.
-
-By default, the original direction columns are dropped after expansion.
-
-### 4. Normalize features
-Numeric columns are min-max normalized to `[0, 1]`:
-
-```text
-(x - min) / (max - min)
-```
-
-Columns listed in `--exclude-normalization` are not normalized.
-
-### 5. Remove low-variance columns
-Global variance is computed over the full dataset for each numeric feature, excluding columns listed in `--exclude-variance`.
-
-Features with variance below `--variance-threshold` are removed.
-
-### 6. Apply PCA
-PCA is applied to the remaining numeric feature columns, excluding columns listed in `--exclude-pca`.
-
-The number of PCA components is chosen automatically so that the retained explained variance is at least the value given by:
-
-- `--pca-retained-variance`
-
-The output after PCA keeps excluded columns such as `time` and `zip`, plus the PCA columns:
-
-- `PC1`
-- `PC2`
-- `PC3`
-- ...
-
-### 7. Hilbert spatial encoding
-ZIP centroids are projected into a quantized 2D grid and assigned Hilbert indices.
-
-The pipeline stores metadata describing:
-
-- ZIP code
-- centroid coordinates
-- grid coordinates
-- Hilbert index
-- Hilbert position
-
-This preserves approximate spatial locality while mapping ZIPs into a 1D ordering.
-
-### 8. Create tensor
-A full tensor is created with shape:
-
-```text
-[time, feature, hilbert_position]
-```
-
-At this point, the feature axis contains the **PCA components**, not the original raw features.
-
-### 9. Split by time
-The full tensor is split into:
-
-- training tensor
-- validation tensor
-- testing tensor
-
-The split is performed along the **time dimension**, not randomly by row.  
-Each split contains all spatial locations.
-
-Fractions are controlled by:
-
-- `--train-fraction`
-- `--val-fraction`
-- `--test-fraction`
-
-These must sum to `1.0`.
-
-### 10. Fill missing values independently
-Each split tensor is filled independently using iterative 2D Lorenzo-style prediction over:
-
-- time
-- hilbert position
-
-This is done **per PCA feature**.
-
-That means:
-
-- train missing values are filled using only train data
-- validation missing values are filled using only validation data
-- test missing values are filled using only test data
-
-This avoids leakage across splits.
+A shapefile is actually multiple files with the same base name, usually including `.shp`, `.shx`, `.dbf`, `.prj`, and sometimes `.cpg`. Keep all of those files together in the same directory.
 
 ---
 
-## Main arguments
+## 5. Python environment
 
-### Required arguments
-
-- `--air-quality`  
-  Path to the air-quality CSV
-
-- `--weather`  
-  Path to the weather CSV
-
-- `--tri-facilities`  
-  Path to the TRI facilities CSV
-
-- `--tri-chemicals`  
-  Path to the TRI chemicals CSV
-
-- `--zip-shapefile`  
-  Path to the ZIP/ZCTA shapefile (`.shp`)
-
-- `--roads-shapefile`  
-  Path to the roads shapefile (`.shp`)
-
-- `--output-dir`  
-  Output directory for intermediates, metadata, and final tensors
-
-- `--variance-threshold`  
-  Threshold below which a feature is removed during variance filtering
-
-- `--pca-retained-variance`  
-  Fraction of variance PCA should retain, for example `0.95`
-
-- `--train-fraction`  
-  Fraction of timesteps used for training
-
-- `--val-fraction`  
-  Fraction of timesteps used for validation
-
-- `--test-fraction`  
-  Fraction of timesteps used for testing
-
-### Optional arguments
-
-- `--place-shapefile`  
-  Accepted but not used by the current implementation
-
-- `--time-col`  
-  Default: `time`
-
-- `--zip-col`  
-  Default: `zip`
-
-- `--exclude-normalization`  
-  Comma-separated columns not to normalize  
-  Default: `time,zip`
-
-- `--exclude-variance`  
-  Comma-separated columns excluded from variance filtering  
-  Default: `time,zip`
-
-- `--exclude-pca`  
-  Comma-separated columns excluded from PCA  
-  Default: `time,zip`
-
-- `--hilbert-order`  
-  Hilbert curve order  
-  Default: `8`
-
-- `--road-radius-km`  
-  Road decay radius in kilometers  
-  Default: `2.0`
-
-- `--facility-radius-km`  
-  Facility decay radius in kilometers  
-  Default: `10.0`
-
-- `--direction-columns`  
-  Comma-separated direction columns to explicitly expand to sin/cos
-
-- `--no-auto-detect-direction-columns`  
-  Disable automatic detection of direction columns
-
-- `--keep-original-direction-columns`  
-  Keep original raw direction columns after creating sin/cos versions
-
----
-
-## Sample run
+Recommended Python packages:
 
 ```bash
-bash run_pipeline.sh \
-  --air-quality ../data/py-impl-data/hourly-air-quality-0215-0222.csv \
-  --weather ../data/py-impl-data/hourly-weather-0215-0222.csv \
-  --tri-facilities ../data/py-impl-data/tri_facilities_houston_2023.csv \
-  --tri-chemicals ../data/py-impl-data/tri_chemicals_houston_2023.csv \
-  --zip-shapefile ../data/texas-shape-data/texas_zcta.shp \
+pip install pandas numpy geopandas shapely pyogrio fiona pyproj
+```
+
+Depending on your system, installing GeoPandas may require system GIS libraries. On many Linux/WSL systems, using conda is often easier:
+
+```bash
+conda create -n aq-preprocess python=3.11 -y
+conda activate aq-preprocess
+conda install -c conda-forge pandas numpy geopandas shapely pyogrio fiona pyproj -y
+```
+
+---
+
+## 6. Full pipeline order
+
+Run the scripts in this order:
+
+1. Merge raw streamed air-quality/weather files into master CSVs.
+2. Strip timezone suffixes from the master CSVs.
+3. Optionally remove redundant `city` and `state` columns.
+4. Download and filter the national ZCTA shapefile to Houston/data ZIPs.
+5. Run the main preprocessing pipeline.
+
+---
+
+## 7. Step-by-step commands
+
+The commands below assume you are running them from the directory containing the scripts. Adjust paths as needed.
+
+### Step 1: Merge raw streamed files into master CSVs
+
+Use `merge_data_into_master_file.py` to append all collected air-quality and weather CSVs into two master files.
+
+```bash
+python merge_data_into_master_file.py \
+  --input-dir ../data/raw-streamed \
+  --state-file ../data/merge_state.json \
+  --air-master ../data/air-quality-master.csv \
+  --weather-master ../data/weather-master.csv
+```
+
+What this does:
+
+- Searches `--input-dir` for `.csv` files.
+- Classifies files containing `_air_quality_` as air-quality files.
+- Classifies files containing `_weather_` as weather files.
+- Sorts the files chronologically using their filename tokens.
+- Appends new files only once using `--state-file`.
+- Rebuilds the master file if newly discovered files belong earlier in chronological order.
+
+You can rerun this command after adding new streamed files. The state JSON tracks which files were already merged.
+
+---
+
+### Step 2: Strip timezone information from both master files
+
+Use `strip_tz_info.py` on both master files. The input and output files must be different paths.
+
+```bash
+python strip_tz_info.py \
+  ../data/air-quality-master.csv \
+  ../data/air-quality-master-tz-stripped.csv \
+  --time-col time
+```
+
+```bash
+python strip_tz_info.py \
+  ../data/weather-master.csv \
+  ../data/weather-master-tz-stripped.csv \
+  --time-col time
+```
+
+This keeps only:
+
+```text
+YYYY-MM-DD HH:MM:SS
+```
+
+For example:
+
+```text
+2026-03-05 12:34:56-06:00 -> 2026-03-05 12:34:56
+2026-03-05 12:34:56Z      -> 2026-03-05 12:34:56
+```
+
+---
+
+### Step 3: Optionally remove redundant columns
+
+Because the project focuses on Houston, `city` and `state` may be redundant. You can either remove them before running `preprocessing.py` or let `preprocessing.py` drop them with `--left-drop-columns city state --right-drop-columns city state`.
+
+To remove them ahead of time:
+
+```bash
+python remove_column.py \
+  ../data/air-quality-master-tz-stripped.csv \
+  ../data/air-quality-master-clean.csv \
+  city state
+```
+
+```bash
+python remove_column.py \
+  ../data/weather-master-tz-stripped.csv \
+  ../data/weather-master-clean.csv \
+  city state
+```
+
+If you remove the columns here, use the `*-clean.csv` files in `preprocessing.py`. If you do not remove them here, use the `--left-drop-columns` and `--right-drop-columns` options in the main preprocessing command.
+
+---
+
+### Step 4: Filter the ZCTA shapefile to ZIP codes in the data
+
+After downloading the 2020 national ZCTA shapefile, run:
+
+```bash
+python filter_houston_zcta.py \
+  --csv ../data/air-quality-master-tz-stripped.csv \
+  --shp ../data/census-zcta-2020/tl_2020_us_zcta520.shp \
+  --output ../data/houston_zcta_filtered.shp
+```
+
+You can use either the air-quality or weather CSV as `--csv`, as long as it contains the ZIP codes used by the pipeline.
+
+This creates a smaller shapefile containing only the ZIP/ZCTA polygons needed for the collected Houston data.
+
+---
+
+### Step 5: Run the full preprocessing pipeline
+
+Basic run:
+
+```bash
+python preprocessing.py \
+  --air-quality ../data/air-quality-master-tz-stripped.csv \
+  --weather ../data/weather-master-tz-stripped.csv \
+  --tri-facilities ../data/important-locations/tri_facilities_houston.csv \
+  --tri-chemicals ../data/important-locations/tri_chemicals_houston.csv \
+  --zip-shapefile ../data/houston_zcta_filtered.shp \
   --roads-shapefile ../data/texas-shape-data/tl_2025_48_prisecroads.shp \
-  --place-shapefile ../data/texas-shape-data/cb_2024_48_place_500k.shp \
-  --output-dir ./pipeline_output \
-  --time-col time \
-  --zip-col zip \
-  --exclude-normalization time,zip \
-  --exclude-variance time,zip \
-  --exclude-pca time,zip \
-  --variance-threshold 1e-6 \
-  --pca-retained-variance 0.95 \
-  --train-fraction 0.70 \
-  --val-fraction 0.15 \
-  --test-fraction 0.15 \
-  --direction-columns wind_direction_10m,wind_direction_100m
+  --output-dir ../data/pipeline-output \
+  --chunk-rows 25000 \
+  --temp-dir ../data/pipeline-output/temp-files \
+  --left-drop-columns city state \
+  --right-drop-columns city state \
+  --feats-for-past us_aqi pm2_5 ozone wind_speed_100m wind_direction_100m_cos wind_direction_100m_sin \
+  --num-past-feats 24
 ```
 
----
-
-## Output structure
-
-The pipeline creates the following directory structure inside `--output-dir`:
-
-```text
-output_dir/
-├── intermediate/
-├── metadata/
-├── logs/
-├── train_tensor_filled.npy
-├── val_tensor_filled.npy
-├── test_tensor_filled.npy
-└── pipeline_full.log
-```
-
-### Intermediate files
-Examples:
-
-- `01_merged.csv`
-- `02_with_spatial_impact.csv`
-- `03_direction_expanded.csv`
-- `04_normalized.csv`
-- `05_variance_filtered.csv`
-- `06_pca.csv`
-- `07_hilbert_encoded.csv`
-- `08_full_tensor.npy`
-- `09_train_tensor.npy`
-- `09_val_tensor.npy`
-- `09_test_tensor.npy`
-
-### Metadata files
-Examples:
-
-- spatial impact formulas and detected columns
-- normalization min/max statistics
-- variance report
-- PCA equations and explained variance
-- Hilbert mapping
-- tensor metadata
-- split metadata
-- Lorenzo fill reports
-
-### Logs
-- `logs/pipeline_steps.log` — step-by-step log
-- `pipeline_full.log` — summary log with parameters, outputs, and metadata file paths
-
----
-
-## Resulting tensor meaning
-
-The final filled tensors:
-
-- `train_tensor_filled.npy`
-- `val_tensor_filled.npy`
-- `test_tensor_filled.npy`
-
-have shape:
-
-```text
-[time, PCA_feature, hilbert_position]
-```
-
-These tensors use **PCA components** as the feature axis.
-
----
-
-## Using the resulting `.npy` files in PyTorch
-
-A `.npy` file can be loaded directly into NumPy, then converted to PyTorch:
-
-```python
-import numpy as np
-import torch
-
-x = np.load("train_tensor_filled.npy")
-x = torch.from_numpy(x).float()
-```
-
-However, a plain PyTorch `RNN`, `GRU`, or `LSTM` expects input shaped like:
-
-- `[seq_len, batch, input_size]`, or
-- `[batch, seq_len, input_size]` if `batch_first=True`
-
-The pipeline’s tensors are shaped as:
-
-```text
-[time, feature, hilbert_position]
-```
-
-So for a vanilla RNN, you should flatten `[feature, hilbert_position]` into one vector per timestep:
-
-```python
-import numpy as np
-import torch
-
-x = np.load("train_tensor_filled.npy")   # [T, F, H]
-T, F, H = x.shape
-x = x.reshape(T, F * H)                  # [T, F*H]
-x = x[np.newaxis, :, :]                  # [1, T, F*H] for batch_first=True
-x = torch.from_numpy(x).float()
-```
-
-Then use:
-
-```python
-import torch.nn as nn
-
-model = nn.RNN(
-    input_size=x.shape[2],
-    hidden_size=128,
-    num_layers=1,
-    batch_first=True
-)
-y, h = model(x)
-```
-
----
-
-## Notes and caveats
-
-- The current spatial impact score uses **ZIP centroids**, which is a practical approximation rather than a full within-ZIP exposure model.
-- The Lorenzo fill is an imputation method over the tensor grid. It is useful for completing sparse tensor slots, but it is not a physical atmospheric transport model.
-- PCA is applied **before** tensor creation, so the tensor features are PCA components rather than the original columns.
-- To preserve the `zip` column through PCA and Hilbert mapping, keep:
+Smaller validation/test run:
 
 ```bash
---exclude-pca time,zip
+python preprocessing.py \
+  --air-quality ../data/air-quality-master-VALIDATION-tz-stripped.csv \
+  --weather ../data/weather-master-VALIDATION-tz-stripped.csv \
+  --tri-facilities ../data/important-locations/tri_facilities_houston.csv \
+  --tri-chemicals ../data/important-locations/tri_chemicals_houston.csv \
+  --zip-shapefile ../data/houston_zcta_filtered.shp \
+  --roads-shapefile ../data/texas-shape-data/tl_2025_48_prisecroads.shp \
+  --output-dir ../data/pipeline-output \
+  --chunk-rows 10000 \
+  --temp-dir ../data/pipeline-output/temp-files \
+  --left-drop-columns city state \
+  --right-drop-columns city state \
+  --feats-for-past us_aqi \
+  --num-past-feats 8
 ```
 
-If `zip` is not excluded from PCA, the Hilbert encoding step will fail because it needs ZIP codes.
+Run with cardinality filtering:
+
+```bash
+python preprocessing.py \
+  --air-quality ../data/air-quality-master-tz-stripped.csv \
+  --weather ../data/weather-master-tz-stripped.csv \
+  --tri-facilities ../data/important-locations/tri_facilities_houston.csv \
+  --tri-chemicals ../data/important-locations/tri_chemicals_houston.csv \
+  --zip-shapefile ../data/houston_zcta_filtered.shp \
+  --roads-shapefile ../data/texas-shape-data/tl_2025_48_prisecroads.shp \
+  --output-dir ../data/pipeline-output \
+  --chunk-rows 25000 \
+  --left-drop-columns city state \
+  --right-drop-columns city state \
+  --feats-for-past us_aqi pm2_5 ozone \
+  --num-past-feats 24 \
+  --cardinality-threshold 2
+```
+
+Run with both cardinality and normalized variance filtering:
+
+```bash
+python preprocessing.py \
+  --air-quality ../data/air-quality-master-tz-stripped.csv \
+  --weather ../data/weather-master-tz-stripped.csv \
+  --tri-facilities ../data/important-locations/tri_facilities_houston.csv \
+  --tri-chemicals ../data/important-locations/tri_chemicals_houston.csv \
+  --zip-shapefile ../data/houston_zcta_filtered.shp \
+  --roads-shapefile ../data/texas-shape-data/tl_2025_48_prisecroads.shp \
+  --output-dir ../data/pipeline-output \
+  --chunk-rows 25000 \
+  --left-drop-columns city state \
+  --right-drop-columns city state \
+  --feats-for-past us_aqi pm2_5 ozone \
+  --num-past-feats 24 \
+  --cardinality-threshold 2 \
+  --variance-threshold 0.0001
+```
 
 ---
 
-## Recommended defaults
+## 8. Main `preprocessing.py` options
 
-A good starting configuration is:
+### Required inputs
 
-- `--variance-threshold 1e-6`
-- `--pca-retained-variance 0.95`
-- `--train-fraction 0.70`
-- `--val-fraction 0.15`
-- `--test-fraction 0.15`
-- `--exclude-normalization time,zip`
-- `--exclude-variance time,zip`
-- `--exclude-pca time,zip`
+```text
+--air-quality        Path to the air-quality master CSV.
+--weather            Path to the weather master CSV.
+--tri-facilities     Path to tri_facilities_houston.csv.
+--tri-chemicals      Path to tri_chemicals_houston.csv.
+--zip-shapefile      Path to filtered Houston/ZCTA .shp file.
+--roads-shapefile    Path to Texas roads .shp file.
+--output-dir         Directory where final CSV, metadata, logs, and intermediates are written.
+```
+
+### Sorting and temporary files
+
+```text
+--chunk-rows         Number of rows per in-memory sort chunk. Default: 25000.
+--temp-dir           Directory for temporary sorted run CSVs.
+--keep-temp-files    Keep temporary sort-run files instead of deleting them.
+```
+
+The script uses an external-sort pattern so that large input CSVs do not need to be loaded fully into memory. It sorts chunks by `zip, time`, then performs a heap-based k-way merge.
+
+### Column dropping
+
+```text
+--left-drop-columns city state
+--right-drop-columns city state
+```
+
+The left input is the air-quality CSV. The right input is the weather CSV.
+
+Do not drop required key columns:
+
+```text
+zip
+time
+```
+
+### Spatial radius options
+
+```text
+--road-radius-km 2.0
+--facility-radius-km 10.0
+```
+
+Roads within `road-radius-km` and facilities within `facility-radius-km` of a ZIP centroid are considered in spatial-impact scoring.
+
+### Wind options
+
+```text
+--facility-wind-mode 10m|100m|blend
+--facility-wind-blend-100m 0.7
+--road-wind-mode 10m|100m|blend
+--road-wind-blend-100m 0.0
+```
+
+By default:
+
+- Facility impact uses a blend of 10m and 100m wind, weighted 70% toward 100m wind.
+- Road impact uses 10m wind.
+
+### Direction-column options
+
+```text
+--direction-columns "wind_direction_10m,wind_direction_100m"
+--no-auto-detect-direction-columns
+--keep-original-direction-columns
+```
+
+By default, direction-like columns are auto-detected and expanded into sine/cosine features. The original direction columns are dropped unless `--keep-original-direction-columns` is passed.
+
+### Lag-feature options
+
+```text
+--feats-for-past us_aqi pm2_5 ozone
+--num-past-feats 24
+```
+
+This creates lag columns for each listed feature. For example, with `--feats-for-past us_aqi --num-past-feats 3`, the output includes:
+
+```text
+us_aqi_past_1
+us_aqi_past_2
+us_aqi_past_3
+```
+
+Lag state is tracked separately by ZIP code.
+
+### Cardinality filter options
+
+```text
+--cardinality-threshold 2
+--exclude-cardinality time,zip,road_impact_score,facility_impact_score,...
+```
+
+Columns with cardinality below the threshold are removed unless they are excluded from the cardinality filter.
+
+### Variance filter options
+
+```text
+--variance-threshold 0.0001
+--exclude-variance time,zip,road_impact_score,facility_impact_score
+```
+
+The variance filter uses normalized variance:
+
+```text
+variance / (max - min)^2
+```
+
+Columns below the threshold are removed unless they are excluded from the variance filter.
 
 ---
 
-## Troubleshooting
+## 9. How spatial-impact scoring works
 
-### TRI column detection fails
-If the pipeline cannot detect TRI columns automatically, verify that the TRI files contain equivalents of:
+The script precomputes ZIP-to-road and ZIP-to-facility relationships once, before streaming the merged rows. This avoids recalculating geometry distances for every row.
 
-- facility ID (`trifd`, `trifid`, etc.)
-- latitude
-- longitude
-- chemical name
-- release / emissions amount
+### Facility impact
 
-### Hilbert step fails due to missing ZIP column
-Make sure you passed:
+For each ZIP centroid, the script finds nearby TRI facilities within `--facility-radius-km`. For each facility, it computes:
 
-```bash
---exclude-pca time,zip
+- Direction vector from facility to ZIP centroid.
+- Distance decay based on facility distance.
+- Facility severity based on total air emissions and number of unique chemicals.
+
+For each row, it computes a wind vector and projects the wind onto the facility-to-ZIP direction. Only positive downwind projections contribute to the score.
+
+Conceptually:
+
+```text
+facility_impact_score = sum(severity * distance_decay * max(dot(wind_vector, source_to_zip_unit_vector), 0))
 ```
 
-### Train/validation/test split error
-The three fractions must:
+### Road impact
 
-- all be greater than `0`
-- sum to `1.0`
+For each ZIP centroid, the script finds nearby roads within `--road-radius-km`. For each road, it computes:
 
-### Direction columns are not expanded
-Either rely on auto-detection, or explicitly pass:
+- Nearest road point to the ZIP centroid.
+- Direction vector from the road to the ZIP centroid.
+- Distance decay based on road distance.
+
+For each row, it projects the road wind vector onto the road-to-ZIP direction. Only positive downwind projections contribute to the score.
+
+Conceptually:
+
+```text
+road_impact_score = sum(distance_decay * max(dot(wind_vector, road_to_zip_unit_vector), 0))
+```
+
+---
+
+## 10. Troubleshooting notes
+
+### `zip` or `time` column errors
+
+The main script expects both air-quality and weather CSVs to contain:
+
+```text
+zip
+time
+```
+
+These are the join keys. Do not remove them.
+
+### Shapefile not found or missing columns
+
+Make sure all shapefile sidecar files are present in the same directory:
+
+```text
+.shp
+.shx
+.dbf
+.prj
+.cpg, if present
+```
+
+If the ZIP shapefile cannot be matched, check that it has one of these columns:
+
+```text
+ZCTA5CE20, ZCTA5CE10, GEOID20, GEOID10, zip, zcta
+```
+
+### CRS/distance confusion
+
+The spatial precompute converts ZIP polygons, roads, and facilities to EPSG:3857 before distance calculations. In that projected CRS, distance units are meters. Radius arguments are given in kilometers and converted to meters internally.
+
+### Input and output path cannot be the same for `strip_tz_info.py`
+
+Use separate paths:
 
 ```bash
---direction-columns wind_direction_10m,wind_direction_100m
+python strip_tz_info.py input.csv output.csv
 ```
+
+Do not overwrite the input file directly.
+
+### Filename pattern matters for master merging
+
+`merge_data_into_master_file.py` expects filenames where:
+
+- The first underscore-separated token is a month, such as `feb` or `march`.
+- The second token begins with a number, such as `4thweek`, `1stweek`, or `10`.
+- The filename contains `_air_quality_` or `_weather_`.
+
+Files that do not match this pattern may not be merged correctly.
+
+---
+
+## 11. Minimal end-to-end command block
+
+```bash
+# 1. Merge streamed raw files.
+python merge_data_into_master_file.py \
+  --input-dir ../data/raw-streamed \
+  --state-file ../data/merge_state.json \
+  --air-master ../data/air-quality-master.csv \
+  --weather-master ../data/weather-master.csv
+
+# 2. Strip timezone suffixes.
+python strip_tz_info.py ../data/air-quality-master.csv ../data/air-quality-master-tz-stripped.csv --time-col time
+python strip_tz_info.py ../data/weather-master.csv ../data/weather-master-tz-stripped.csv --time-col time
+
+# 3. Filter ZCTA polygons to the ZIP codes in the data.
+python filter_houston_zcta.py \
+  --csv ../data/air-quality-master-tz-stripped.csv \
+  --shp ../data/census-zcta-2020/tl_2020_us_zcta520.shp \
+  --output ../data/houston_zcta_filtered.shp
+
+# 4. Run preprocessing.
+python preprocessing.py \
+  --air-quality ../data/air-quality-master-tz-stripped.csv \
+  --weather ../data/weather-master-tz-stripped.csv \
+  --tri-facilities ../data/important-locations/tri_facilities_houston.csv \
+  --tri-chemicals ../data/important-locations/tri_chemicals_houston.csv \
+  --zip-shapefile ../data/houston_zcta_filtered.shp \
+  --roads-shapefile ../data/texas-shape-data/tl_2025_48_prisecroads.shp \
+  --output-dir ../data/pipeline-output \
+  --chunk-rows 25000 \
+  --left-drop-columns city state \
+  --right-drop-columns city state \
+  --feats-for-past us_aqi pm2_5 ozone wind_speed_100m wind_direction_100m_cos wind_direction_100m_sin \
+  --num-past-feats 24
+```
+
+---
+
+## 12. Reference repository
+
+The following GitHub repository is useful as a reference for the original data-collection side of the project:
+
+```text
+https://github.com/GlowSand/AQ_ML_Pipeline/tree/master
+```
+
+Its README describes a broader AQ/ML pipeline that pulls from Open-Meteo Air Quality, Open-Meteo Weather, EPA FRS, US Census ACS, OSMnx/OpenStreetMap, and TRI files. This preprocessing pipeline mainly consumes the resulting streamed air-quality/weather CSVs, TRI CSVs, Census ZCTA shapefiles, and Census roads shapefiles.

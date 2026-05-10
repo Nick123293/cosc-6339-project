@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-
+"""This file is used to merge the streaming data given to us by the data collection team into one file for easier preprocessing. This program reads a state file, 
+which is stored as a json, to find out which files from data collection have already been appended, and then appends those which have not yet been. This means 
+that if you want to add more data to your "master" csv, you can simply run this file again, giving the state file that was created on earlier runs.
+Set --input-dir to the path of all the data, --state-json to any path where you want to store the state file, 
+--air-master to the output path of the created air quality file, and --weather-master to the output path of the created weather file (these files will be created, 
+so any name will work. )"""
 import argparse
 import csv
 import json

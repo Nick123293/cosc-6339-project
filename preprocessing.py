@@ -1,5 +1,35 @@
 #!/usr/bin/env python3
-
+"""
+This file uses data which is available on the github through Github Large File Storage.
+To access this data, either download it though the remote repository (data is stored in both 'data' and 'static data' folders), or you can also use the command line:
+First install git-lfs using the command "sudo apt install git-lfs", then run the command "git lfs install". Now clone the repo, and cd into the repo, then run
+"git lfs pull" to install on files from the repo which are stored in using Github Large File Storage to your local machine.
+The data we used for this project was all of the data inside the 'data' folder, along with tri_chemicals_houston.csv and tri_facilities_houston.csv.
+No data preprocessing was done to tri_chemicals_houston.csv and tri_facilities_houston.csv for use in this script.
+To begin preprocessing the streaming data, we first merge all air-quality and weather data into one "master" data file, which is simply an appending of all the air-quality
+or weather files together, making it easier to use. This is done through merge_data_into_master_file.py
+Once this is done, run both of these "master" files through strip_tz_info.py, note that the input and output csv needs to be different for this script to work correctly.
+This removes all time zone information from the "time" column (since we are only looking at Houston, time zone information is redundant).
+We recommend using remove_column.py to remove City and State columns from this data as well, since it is also redundant. Alternatively, you can set:
+"--left-drop-columns city state --right-drop-columns city state" to drop these columns during this scripts runtime. 
+In addition this file uses data from the US Census, the downloading and preprocessing information is below:
+The US Census TIGER/Line shapefiles for zip code polygons, can be found here:
+https://www.census.gov/cgi-bin/geo/shapefiles/index.php?year=2020&layergroup=ZIP%20Code%20Tabulation%20Areas
+To retreive this data, simply click the link above and download the ZIP Code Tabulation Areas (2020) national file.
+Once this data is collected, run:
+filter_houston_zcta.py --csv **air-quality OR weather csv** --shp **PATH TO THE SHAPEFILE YOU JUST DOWNLOADED** --output **NEW SHAPEFILE NAME**
+This will create a new .shp file which contains only information required to make zip polygons for the zip codes which are included in the data gathered from 
+data-collection. 
+In addition, we use US Census TIGER/Line shapefiles for roads for Texas, which can be found here:
+https://www.census.gov/cgi-bin/geo/shapefiles/index.php?year=2025&layergroup=Roads
+To retrieve this data, click the above link, then select the state of Texas in the "Select a State:" down under "Primary and Secondary Roads", then press download.
+For simplicity this file is not reduced in size, since depending on the road-radius-km command line argument, roads outside of houston may affect some zip codes. 
+No further data preprocessing is needed. A sample run for this script looks like:
+py preprocessing.py --air-quality ../data/air-quality-master-VALIDATION-tz-stripped.csv --weather ../data/weather-master-VALIDATION-tz-stripped.csv \
+--tri-facilities ../data/important-locations/tri_facilities_houston.csv --tri-chemicals ../data/important-locations/tri_chemicals_houston.csv \
+--zip-shapefile houston_zcta_filtered.shp --roads-shapefile ../data/texas-shape-data/tl_2025_48_prisecroads.shp --output-dir ../data/pipeline-output \
+--chunk-rows 10000 --temp-dir ../data/pipeline-output/temp-files/ --left-drop-columns city state --right-drop-columns city state --feats-for-past us_aqi \
+--num-past-feats 8"""
 import argparse
 import csv
 import heapq
